@@ -4403,7 +4403,14 @@ export function useDesktopState() {
       }
 
       const needsResume = resumedThreadById.value[threadId] !== true
-      const resumedThread = needsResume ? await resumeThread(threadId) : null
+      let resumedThread: Awaited<ReturnType<typeof resumeThread>> | null = null
+      if (needsResume) {
+        try {
+          resumedThread = await resumeThread(threadId)
+        } catch {
+          resumedThread = null
+        }
+      }
       const detail = resumedThread ?? await getThreadDetail(threadId)
 
       if (detail.modelProvider) {
