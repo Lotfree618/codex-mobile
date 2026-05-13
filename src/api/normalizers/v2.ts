@@ -399,26 +399,35 @@ export function toUiFileChanges(changes: unknown): UiFileChange[] {
   return normalized
 }
 
-function toUiMessages(item: ThreadItem): UiMessage[] {
+function readThreadItemId(item: ThreadItem): string {
+  return typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : ''
+}
+
+function toUiMessages(item: ThreadItem, fallbackItemId: string): UiMessage[] {
+  const itemId = readThreadItemId(item) || fallbackItemId
+
   if (item.type === 'agentMessage') {
+    const text = typeof item.text === 'string' ? item.text : ''
+    if (!itemId || !text) return []
     return [
       {
-        id: item.id,
+        id: itemId,
         role: 'assistant',
-        text: item.text,
+        text,
         messageType: item.type,
       },
     ]
   }
 
   if (item.type === 'userMessage') {
-    const parsed = parseUserMessageContent(item.id, item.content as UserInput[] | undefined)
+    if (!itemId) return []
+    const parsed = parseUserMessageContent(itemId, item.content as UserInput[] | undefined)
     const messages: UiMessage[] = []
     const hasRenderableUserContent = parsed.text.length > 0 || parsed.images.length > 0 || parsed.fileAttachments.length > 0 || parsed.skills.length > 0
 
     if (hasRenderableUserContent) {
       messages.push({
-        id: item.id,
+        id: itemId,
         role: 'user',
         text: parsed.text,
         images: parsed.images,
@@ -440,10 +449,10 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
 
   if (item.type === 'imageView') {
     const path = typeof item.path === 'string' ? item.path.trim() : ''
-    if (!path) return []
+    if (!itemId || !path) return []
     return [
       {
-        id: item.id,
+        id: itemId,
         role: 'assistant',
         text: '',
         images: [toLocalImageUrl(path)],
@@ -456,10 +465,10 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     const rawItem = item as unknown as Record<string, unknown>
     if (rawItem.type === 'imageGeneration' || rawItem.type === 'image_generation') {
       const result = typeof rawItem.result === 'string' ? toImageGenerationUrl(rawItem.result) : ''
-      if (!result) return []
+      if (!itemId || !result) return []
       return [
         {
-          id: item.id,
+          id: itemId,
           role: 'assistant',
           text: '',
           images: [result],
@@ -476,9 +485,10 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
 
   if (item.type === 'plan') {
     const text = typeof item.text === 'string' ? item.text : ''
+    if (!itemId) return []
     return [
       {
-        id: item.id,
+        id: itemId,
         role: 'assistant',
         text,
         messageType: 'plan',
@@ -488,6 +498,7 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   }
 
   if (item.type === 'commandExecution') {
+    if (!itemId) return []
     const raw = item as Record<string, unknown>
     const status = normalizeCommandStatus(raw.status)
     const cmd = typeof raw.command === 'string' ? raw.command : ''
@@ -496,7 +507,7 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     const exitCode = typeof raw.exitCode === 'number' ? raw.exitCode : null
     return [
       {
-        id: item.id,
+        id: itemId,
         role: 'system' as const,
         text: cmd,
         messageType: 'commandExecution',
@@ -506,6 +517,7 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
   }
 
   if (item.type === 'fileChange') {
+    if (!itemId) return []
     const fileChanges = toUiFileChanges(item.changes)
     const fileChangeStatus = normalizeFileChangeStatus(item.status)
     if (fileChanges.length === 0 || fileChangeStatus !== 'completed') {
@@ -513,7 +525,7 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
     }
     return [
       {
-        id: item.id,
+        id: itemId,
         role: 'system',
         text: '',
         messageType: 'fileChange',
@@ -637,8 +649,10 @@ export function normalizeThreadMessagesV2(payload: ThreadReadResponse, baseTurnI
     const rawTurnId = typeof turn?.id === 'string' ? turn.id.trim() : ''
     const turnId = rawTurnId.length > 0 ? rawTurnId : undefined
     const items = Array.isArray(turn.items) ? turn.items : []
-    for (const item of items) {
-      for (const msg of toUiMessages(item)) {
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+      const item = items[itemIndex]
+      const fallbackItemId = `${turnId ?? `turn-${turnIndex}`}:item-${itemIndex}`
+      for (const msg of toUiMessages(item, fallbackItemId)) {
         messages.push({ ...msg, turnId, turnIndex })
       }
     }

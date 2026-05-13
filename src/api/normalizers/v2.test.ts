@@ -45,6 +45,32 @@ describe('normalizeThreadMessagesV2', () => {
     })
   })
 
+  it('renders recovered session messages that do not include item ids', () => {
+    const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([
+      {
+        type: 'userMessage',
+        content: [{ type: 'text', text: 'hi', text_elements: [] }],
+      } as never,
+      {
+        type: 'agentMessage',
+        text: 'Hey! How can I help you today?',
+      } as never,
+    ]))
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: 'turn-1:item-0',
+        role: 'user',
+        text: 'hi',
+      }),
+      expect.objectContaining({
+        id: 'turn-1:item-1',
+        role: 'assistant',
+        text: 'Hey! How can I help you today?',
+      }),
+    ])
+  })
+
   it('renders skill-only user messages instead of dropping them as raw blocks', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
