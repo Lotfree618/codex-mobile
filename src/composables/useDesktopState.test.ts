@@ -681,6 +681,31 @@ describe('live error overlay', () => {
     })
   })
 
+  it('starts a new turn with the active model when historical provider resume fails', async () => {
+    installTestWindow()
+    gatewayMocks.resumeThread.mockRejectedValueOnce(new Error('Model provider `opencode_zen` not found'))
+    gatewayMocks.startThreadTurn.mockResolvedValueOnce('gpt-turn')
+
+    const state = useDesktopState()
+    state.primeSelectedThread('historical-provider-thread')
+    state.setSelectedModelIdForThread('historical-provider-thread', 'gpt-5.5')
+
+    await state.sendMessageToSelectedThread('hi from gpt')
+
+    expect(gatewayMocks.resumeThread).toHaveBeenCalledWith('historical-provider-thread')
+    expect(gatewayMocks.startThreadTurn).toHaveBeenCalledWith(
+      'historical-provider-thread',
+      'hi from gpt',
+      [],
+      'gpt-5.5',
+      expect.any(String),
+      undefined,
+      [],
+      expect.any(String),
+    )
+    expect(state.error.value).toBe('')
+  })
+
   it('keeps a new live error visible when an older persisted turn error exists', async () => {
     installTestWindow()
     let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}

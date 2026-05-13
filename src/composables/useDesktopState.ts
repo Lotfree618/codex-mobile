@@ -109,6 +109,11 @@ function isThreadNotFoundError(error: unknown): boolean {
   return /\b404\b|thread.*not found|conversation.*not found|no such thread|no rollout found for thread id/i.test(message)
 }
 
+function isMissingHistoricalProviderError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return message.includes('Model provider') && message.includes('not found')
+}
+
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
 
@@ -4407,8 +4412,10 @@ export function useDesktopState() {
       if (needsResume) {
         try {
           resumedThread = await resumeThread(threadId)
-        } catch {
-          resumedThread = null
+        } catch (unknownError) {
+          if (!isMissingHistoricalProviderError(unknownError)) {
+            throw unknownError
+          }
         }
       }
       const detail = resumedThread ?? await getThreadDetail(threadId)
@@ -4419,7 +4426,7 @@ export function useDesktopState() {
       if (detail.model) {
         setThreadModelId(threadId, resolveThreadModelForProvider(threadId, detail.model, detail.modelProvider))
       }
-      if (resumedThread) {
+      if (resumedThread || needsResume) {
         resumedThreadById.value = {
           ...resumedThreadById.value,
           [threadId]: true,
@@ -5084,16 +5091,22 @@ export function useDesktopState() {
 
     try {
       if (resumedThreadById.value[threadId] !== true) {
-        const resumedThread = await resumeThread(threadId)
-        if (resumedThread.model) {
-          setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
-        }
-        if (resumedThread.modelProvider) {
-          setThreadModelProviderId(threadId, resumedThread.modelProvider)
-        }
-        resumedThreadById.value = {
-          ...resumedThreadById.value,
-          [threadId]: true,
+        try {
+          const resumedThread = await resumeThread(threadId)
+          if (resumedThread.model) {
+            setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
+          }
+          if (resumedThread.modelProvider) {
+            setThreadModelProviderId(threadId, resumedThread.modelProvider)
+          }
+          resumedThreadById.value = {
+            ...resumedThreadById.value,
+            [threadId]: true,
+          }
+        } catch (unknownError) {
+          if (!isMissingHistoricalProviderError(unknownError)) {
+            throw unknownError
+          }
         }
       }
       const modelId = readModelIdForThread(threadId)

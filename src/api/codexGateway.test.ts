@@ -173,6 +173,37 @@ describe('getAvailableModelIds', () => {
     })).resolves.toEqual(['gpt-5.5', 'gpt-5.4-mini'])
     expect(requests).toEqual(['/codex-api/provider-models', '/codex-api/rpc'])
   })
+
+  it('uses default Codex models when the CLI model list is empty', async () => {
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(String(input))
+      if (String(input) === '/codex-api/provider-models') {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string }
+        : { method: '' }
+      expect(body.method).toBe('model/list')
+      return new Response(JSON.stringify({
+        result: {
+          data: [],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getAvailableModelIds({
+      includeProviderModels: true,
+    })).resolves.toEqual(['gpt-5.5', 'gpt-5.4-mini'])
+    expect(requests).toEqual(['/codex-api/provider-models', '/codex-api/rpc'])
+  })
 })
 
 describe('getThreadDetail', () => {

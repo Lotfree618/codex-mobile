@@ -253,6 +253,7 @@ type ProviderModelsResponse = {
 }
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
+const DEFAULT_CODEX_MODEL_IDS = ['gpt-5.5', 'gpt-5.4-mini']
 
 type ResolvedCollaborationModeSettings = {
   model: string
@@ -2050,6 +2051,9 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
     const candidate = row.id || row.model
     if (!candidate || ids.includes(candidate)) continue
     ids.push(candidate)
+  }
+  if (ids.length === 0 && !providerModels?.exclusive && !options.requireProviderModels) {
+    ids.push(...DEFAULT_CODEX_MODEL_IDS)
   }
 
   if (!shouldIncludeProviderModels || !providerModels) return ids
