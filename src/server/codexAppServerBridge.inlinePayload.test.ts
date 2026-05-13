@@ -4,6 +4,7 @@ import {
   BackendQueueProcessor,
   mergeSessionSkillInputsIntoTurns,
   parseAutomationToml,
+  recoverEmptyThreadTurnsFromSessionLog,
   sanitizeThreadTurnsInlinePayloads,
   toAutomationApiRecord,
 } from './codexAppServerBridge'
@@ -239,6 +240,62 @@ describe('thread inline media sanitization', () => {
 })
 
 describe('thread session skill recovery', () => {
+  it('recovers user and assistant turns from a session JSONL when backend turns are empty', () => {
+    const payload = {
+      thread: {
+        id: 'thread-1',
+        path: '/tmp/session.jsonl',
+        turns: [],
+      },
+    }
+    const sessionLog = [
+      JSON.stringify({ type: 'turn_context', payload: { turn_id: 'turn-1' } }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'hi' }],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Hi! How can I help you today?' }],
+        },
+      }),
+    ].join('\n')
+
+    const recovered = recoverEmptyThreadTurnsFromSessionLog(payload, sessionLog) as {
+      thread: { turns: Array<{ id: string; items: Array<Record<string, unknown>> }> }
+    }
+
+    expect(recovered.thread.turns).toHaveLength(1)
+    expect(recovered.thread.turns[0].id).toBe('turn-1')
+    expect(recovered.thread.turns[0].items).toEqual([
+      {
+        id: 'turn-1-session-user-1',
+        type: 'userMessage',
+        content: [{ type: 'text', text: 'hi', text_elements: [] }],
+      },
+      {
+        id: 'turn-1-session-agent-2',
+        type: 'agentMessage',
+        text: 'Hi! How can I help you today?',
+      },
+    ])
+  })
+
   it('adds selected skill inputs from session JSONL to matching user messages', () => {
     const turns = [{
       id: 'turn-1',

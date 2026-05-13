@@ -418,6 +418,118 @@ export function mergeSessionSkillInputsIntoTurns(turns: unknown[], sessionLogRaw
   return mergeSessionSkillInputsIntoTurnsFromMap(turns, buildSessionSkillInputsByTurn(sessionLogRaw))
 }
 
+function readMessageTextContent(content: unknown): string {
+  if (typeof content === 'string') return content.trim()
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const block of content) {
+    const blockRecord = asRecord(block)
+    const text = typeof blockRecord?.text === 'string' ? blockRecord.text.trim() : ''
+    if (text) parts.push(text)
+  }
+  return parts.join('\n\n').trim()
+}
+
+function readResponseItemMessageText(payload: Record<string, unknown>): string {
+  const explicitText = typeof payload.text === 'string' ? payload.text.trim() : ''
+  if (explicitText) return explicitText
+  return readMessageTextContent(payload.content)
+}
+
+export function recoverEmptyThreadTurnsFromSessionLog(result: unknown, sessionLogRaw: string): unknown {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const existingTurns = Array.isArray(thread?.turns) ? thread.turns : null
+  if (!record || !thread || !existingTurns || existingTurns.length > 0) return result
+
+  const turnsById = new Map<string, { id: string; items: Record<string, unknown>[]; status: string }>()
+  let currentTurnId = ''
+
+  function ensureTurn(turnId: string): { id: string; items: Record<string, unknown>[]; status: string } {
+    const existing = turnsById.get(turnId)
+    if (existing) return existing
+    const turn = { id: turnId, items: [], status: 'completed' }
+    turnsById.set(turnId, turn)
+    return turn
+  }
+
+  for (const line of sessionLogRaw.split(/\r?\n/u)) {
+    if (!line.trim()) continue
+    let entry: Record<string, unknown> | null = null
+    try {
+      entry = asRecord(JSON.parse(line))
+    } catch {
+      continue
+    }
+    if (!entry) continue
+
+    const type = typeof entry.type === 'string' ? entry.type : ''
+    const payload = asRecord(entry.payload)
+    if (type === 'turn_context') {
+      const nextTurnId = readNonEmptyString(payload?.turn_id)
+      if (nextTurnId) currentTurnId = nextTurnId
+      continue
+    }
+    if (type === 'event_msg' && asRecord(payload)?.type === 'task_started') {
+      const nextTurnId = readNonEmptyString(asRecord(payload)?.turn_id)
+      if (nextTurnId) currentTurnId = nextTurnId
+      continue
+    }
+    if (type !== 'response_item' || !payload || payload.type !== 'message') continue
+
+    const role = typeof payload.role === 'string' ? payload.role : ''
+    if (role !== 'user' && role !== 'assistant') continue
+
+    const text = readResponseItemMessageText(payload)
+    if (!text || text.startsWith('<skill>') || text.startsWith('<environment_context>')) continue
+
+    const turnId = currentTurnId || `${readNonEmptyString(thread.id) || 'thread'}-session-turn-${turnsById.size + 1}`
+    const turn = ensureTurn(turnId)
+    const itemIndex = turn.items.length + 1
+    if (role === 'user') {
+      turn.items.push({
+        id: `${turnId}-session-user-${itemIndex}`,
+        type: 'userMessage',
+        content: [{ type: 'text', text, text_elements: [] }],
+      })
+    } else {
+      turn.items.push({
+        id: `${turnId}-session-agent-${itemIndex}`,
+        type: 'agentMessage',
+        text,
+      })
+    }
+  }
+
+  const recoveredTurns = [...turnsById.values()].filter((turn) => turn.items.length > 0)
+  if (recoveredTurns.length === 0) return result
+
+  return {
+    ...record,
+    thread: {
+      ...thread,
+      turns: recoveredTurns,
+    },
+  }
+}
+
+async function recoverEmptyThreadTurnsFromSessionResult(result: unknown): Promise<unknown> {
+  const record = asRecord(result)
+  const thread = asRecord(record?.thread)
+  const turns = Array.isArray(thread?.turns) ? thread.turns : null
+  const sessionPath = readNonEmptyString(thread?.path)
+  if (!record || !thread || !turns || turns.length > 0 || !sessionPath || !isAbsolute(sessionPath)) {
+    return result
+  }
+
+  try {
+    const sessionLogRaw = await readFile(sessionPath, 'utf8')
+    return recoverEmptyThreadTurnsFromSessionLog(result, sessionLogRaw)
+  } catch {
+    return result
+  }
+}
+
 async function mergeSessionSkillInputsIntoThreadResult(result: unknown): Promise<unknown> {
   const record = asRecord(result)
   const thread = asRecord(record?.thread)
@@ -7950,15 +8062,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 	            setJson(res, 200, { result: null })
 	            return
 	          }
-		          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
-		            const params = asRecord(body.params)
-		            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
-		            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
-		            if (snapshot) {
-		              setJson(res, 200, { result: snapshot })
-		              return
-		            }
-		          }
+          if (body.method === 'thread/read' && isEmptyThreadReadError(error)) {
+            const params = asRecord(body.params)
+            const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
+            const snapshot = threadId ? appServer.getLastThreadReadSnapshot(threadId) : null
+            if (snapshot) {
+              setJson(res, 200, { result: snapshot })
+              return
+            }
+          }
           if (body.method === 'thread/read' && isThreadMaterializationPendingError(error)) {
             const params = asRecord(body.params)
             const threadId = typeof params?.threadId === 'string' ? params.threadId.trim() : ''
@@ -7975,9 +8087,12 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               return
             }
           }
-		          throw error
-		        }
-        const trimmedResult = trimThreadTurnsInRpcResult(body.method, rpcResult)
+          throw error
+        }
+        const recoveredRpcResult = THREAD_METHODS_WITH_TURNS.has(body.method)
+          ? await recoverEmptyThreadTurnsFromSessionResult(rpcResult)
+          : rpcResult
+        const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredRpcResult)
         const errorMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? mergeStreamTurnErrorsIntoThreadResult(appServer, trimmedResult)
           : trimmedResult
