@@ -13,3 +13,6 @@ pnpm-lock.yaml
 
 package.json
 .omx/
+.env
+.cert/
+*.pem
