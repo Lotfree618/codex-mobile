@@ -427,7 +427,7 @@ function listenWithFallback(server: ReturnType<typeof createServer>, startPort: 
 
       server.once('error', onError)
       server.once('listening', onListening)
-      server.listen(port, '0.0.0.0')
+      server.listen(port, process.env.CODEXUI_BIND_HOST?.trim() || '0.0.0.0')
     }
 
     attempt(startPort)
@@ -563,7 +563,7 @@ async function startServer(options: {
     `  Version:  ${version}`,
     '  GitHub:   https://github.com/friuns2/codexui',
     '',
-    `  Bind:     http://0.0.0.0:${String(port)}`,
+    `  Bind:     http://${process.env.CODEXUI_BIND_HOST?.trim() || '0.0.0.0'}:${String(port)}`,
     `  Codex sandbox: ${runtimeConfig.sandboxMode}`,
     `  Approval policy: ${runtimeConfig.approvalPolicy}`,
   ]
