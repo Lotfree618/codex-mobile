@@ -16,6 +16,7 @@ import type {
   ThreadLoadedListResponse,
   ThreadReadResponse,
   ThreadResumeResponse,
+  ThreadUnsubscribeResponse,
   ThreadTurnsListResponse,
   ThreadStartResponse,
   Turn,
@@ -1493,7 +1494,11 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
 export async function unsubscribeThread(threadId: string): Promise<void> {
   const normalizedThreadId = threadId.trim()
   if (!normalizedThreadId) return
-  await callRpc('thread/unsubscribe', { threadId: normalizedThreadId })
+  const response = await callRpc<ThreadUnsubscribeResponse>('thread/unsubscribe', {
+    threadId: normalizedThreadId,
+  })
+  if (response.status !== 'notLoaded') return
+
   let cursor: string | null = null
   do {
     const loaded: ThreadLoadedListResponse = await callRpc<ThreadLoadedListResponse>('thread/loaded/list', {
@@ -1501,7 +1506,7 @@ export async function unsubscribeThread(threadId: string): Promise<void> {
       limit: 100,
     })
     if (loaded.data.includes(normalizedThreadId)) {
-      throw new Error(`thread/unsubscribe left thread ${normalizedThreadId} loaded`)
+      throw new Error(`thread/unsubscribe reported ${normalizedThreadId} not loaded, but thread/loaded/list still includes it`)
     }
     cursor = loaded.nextCursor
   } while (cursor)
