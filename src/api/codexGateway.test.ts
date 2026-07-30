@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelCatalog, getAvailableModelIds, getOlderThreadMessages, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAvailableModelCatalog, getAvailableModelIds, getOlderThreadMessages, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn, steerThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -11,13 +11,11 @@ function mockRpcFetch(): { requests: Array<{ method: string, params: Record<stri
 
     requests.push(body)
 
-    return new Response(JSON.stringify({
-      result: {
-        turn: {
-          id: `turn-${requests.length}`,
-        },
-      },
-    }), {
+    const result = body.method === 'turn/steer'
+      ? { turnId: 'turn-active' }
+      : { turn: { id: `turn-${requests.length}` } }
+
+    return new Response(JSON.stringify({ result }), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
@@ -58,6 +56,27 @@ describe('startThreadTurn collaboration mode payloads', () => {
         developer_instructions: null,
       },
     })
+  })
+})
+
+describe('steerThreadTurn', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses official turn/steer with an active turn precondition', async () => {
+    const { requests } = mockRpcFetch()
+
+    await expect(steerThreadTurn('thread-1', 'turn-active', 'focus on tests')).resolves.toBe('turn-active')
+
+    expect(requests).toEqual([{
+      method: 'turn/steer',
+      params: {
+        threadId: 'thread-1',
+        expectedTurnId: 'turn-active',
+        input: [{ type: 'text', text: 'focus on tests' }],
+      },
+    }])
   })
 })
 

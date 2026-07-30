@@ -11,6 +11,8 @@
 
 #### Expected Results
 - The pending card disappears when `serverRequest/resolved` arrives.
+- String and integer request IDs are both accepted.
+- Turn completion and interruption clear any remaining requests scoped to that thread.
 - The bridge pending-request endpoint no longer returns the resolved request.
 - Reconnect does not restore the stale card.
 

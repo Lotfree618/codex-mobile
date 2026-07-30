@@ -8,6 +8,7 @@ Return to the [manual test index](../../tests.md).
 
 | Section |
 | --- |
+| [Feature: Steer appends to the active turn](steer-appends-to-the-active-turn.md) |
 | [Feature: Server request resolution clears pending cards](server-request-resolution-clears-pending-cards.md) |
 | [Codex thread deep links render as local web thread URLs](codex-thread-deep-links-render-as-local-web-thread-urls.md) |
 | [Bold-wrapped Markdown links render without literal markers](bold-wrapped-markdown-links-render-without-literal-markers.md) |

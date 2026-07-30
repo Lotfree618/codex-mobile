@@ -39,6 +39,7 @@ const gatewayMocks = vi.hoisted(() => ({
   setWorkspaceRootsState: vi.fn(),
   startThread: vi.fn(),
   startThreadTurn: vi.fn(),
+  steerThreadTurn: vi.fn(),
   subscribeCodexNotifications: vi.fn(),
   unsubscribeThread: vi.fn(),
 }))
@@ -597,7 +598,7 @@ describe('startup request deduplication', () => {
     }
   })
 
-  it('bypasses recent thread-list reuse for event-driven thread refreshes', async () => {
+  it('updates thread names locally without refreshing the thread list', async () => {
     installTestWindow()
     vi.mocked(window.setTimeout).mockImplementation(((callback: TimerHandler) => {
       if (typeof callback === 'function') {
@@ -627,6 +628,55 @@ describe('startup request deduplication', () => {
         params: {
           threadId: 'thread-1',
           threadName: 'Updated title',
+        },
+      })
+      notificationHandler!({
+        method: 'thread/status/changed',
+        params: {
+          threadId: 'thread-1',
+          status: { type: 'active', activeFlags: [] },
+        },
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(gatewayMocks.getThreadGroupsPage).toHaveBeenCalledTimes(callsBeforeNotification)
+      expect(state.projectGroups.value[0]?.threads[0]?.title).toBe('Updated title')
+      expect(state.projectGroups.value[0]?.threads[0]?.inProgress).toBe(true)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('refreshes the thread list for topology-changing events', async () => {
+    installTestWindow()
+    vi.mocked(window.setTimeout).mockImplementation(((callback: TimerHandler) => {
+      if (typeof callback === 'function') {
+        void Promise.resolve().then(() => callback())
+      }
+      return 1
+    }) as typeof window.setTimeout)
+    let notificationHandler: ((notification: { method: string; params?: unknown }) => void) | undefined
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler as typeof notificationHandler
+      return vi.fn()
+    })
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project')] }],
+      nextCursor: null,
+    })
+
+    try {
+      const state = useDesktopState()
+      await state.refreshAll({ includeSelectedThreadMessages: false })
+      const callsBeforeNotification = gatewayMocks.getThreadGroupsPage.mock.calls.length
+      state.startPolling()
+      expect(notificationHandler).toBeDefined()
+      notificationHandler!({
+        method: 'thread/started',
+        params: {
+          thread: thread('thread-2', '/tmp/project'),
         },
       })
       await Promise.resolve()
@@ -725,6 +775,105 @@ describe('live error overlay', () => {
       expect.any(String),
     )
     expect(state.error.value).toBe('')
+  })
+
+  it('steers an active turn instead of starting a queued replacement turn', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.steerThreadTurn.mockResolvedValue('turn-active')
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-steer')
+    state.startPolling()
+    notificationHandler({
+      method: 'turn/started',
+      params: {
+        threadId: 'thread-steer',
+        turn: { id: 'turn-active' },
+      },
+    })
+
+    await state.sendMessageToSelectedThread('focus on tests', [], [], 'steer')
+    await Promise.resolve()
+
+    expect(gatewayMocks.steerThreadTurn).toHaveBeenCalledWith(
+      'thread-steer',
+      'turn-active',
+      'focus on tests',
+      [],
+      [],
+      [],
+    )
+    expect(gatewayMocks.startThreadTurn).not.toHaveBeenCalled()
+  })
+
+  it('clears string-id pending requests when another client resolves them', async () => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-request')
+    state.startPolling()
+    notificationHandler({
+      method: 'server/request',
+      params: {
+        id: 'request-1',
+        method: 'item/tool/requestUserInput',
+        params: { threadId: 'thread-request', turnId: 'turn-1', questions: [] },
+        receivedAtIso: '2026-07-30T00:00:00.000Z',
+      },
+    })
+    expect(state.selectedThreadServerRequests.value).toHaveLength(1)
+
+    notificationHandler({
+      method: 'serverRequest/resolved',
+      params: { threadId: 'thread-request', requestId: 'request-1' },
+    })
+
+    expect(state.selectedThreadServerRequests.value).toEqual([])
+  })
+
+  it.each(['completed', 'interrupted'])('clears pending requests when a turn is %s', (status) => {
+    installTestWindow()
+    let notificationHandler: (notification: { method: string; params?: unknown }) => void = () => {}
+    gatewayMocks.subscribeCodexNotifications.mockImplementation((handler) => {
+      notificationHandler = handler
+      return vi.fn()
+    })
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-request')
+    state.startPolling()
+    notificationHandler({
+      method: 'server/request',
+      params: {
+        id: 'request-1',
+        method: 'item/tool/requestUserInput',
+        params: { threadId: 'thread-request', turnId: 'turn-1', questions: [] },
+        receivedAtIso: '2026-07-30T00:00:00.000Z',
+      },
+    })
+
+    notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-request',
+        turn: { id: 'turn-1', status },
+      },
+    })
+
+    expect(state.selectedThreadServerRequests.value).toEqual([])
   })
 
   it('keeps a new live error visible when an older persisted turn error exists', async () => {

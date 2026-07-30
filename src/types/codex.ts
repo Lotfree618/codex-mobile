@@ -225,7 +225,7 @@ export type UiMessage = {
 }
 
 export type UiServerRequest = {
-  id: number
+  id: string | number
   method: string
   threadId: string
   turnId: string
@@ -235,7 +235,7 @@ export type UiServerRequest = {
 }
 
 export type UiServerRequestReply = {
-  id: number
+  id: string | number
   result?: unknown
   followUpMessageText?: string
   error?: {

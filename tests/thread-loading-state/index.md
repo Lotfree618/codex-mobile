@@ -8,6 +8,7 @@ Return to the [manual test index](../../tests.md).
 
 | Section |
 | --- |
+| [Feature: Thread status events update locally](thread-status-events-update-locally.md) |
 | [Feature: Inactive thread subscriptions are released](inactive-thread-subscriptions-are-released.md) |
 | [Pinned threads remain visible during background pagination](pinned-threads-remain-visible-during-background-pagination.md) |
 | [Thread archive recovery and sidebar pruning](thread-archive-recovery-and-sidebar-pruning.md) |

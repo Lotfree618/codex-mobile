@@ -57,7 +57,7 @@ type JsonRpcCall = {
 }
 
 type JsonRpcResponse = {
-  id?: number
+  id?: string | number
   result?: unknown
   error?: {
     code: number
@@ -98,10 +98,15 @@ export type WorkspaceRootsState = {
 }
 
 type PendingServerRequest = {
-  id: number
+  id: string | number
   method: string
   params: unknown
   receivedAtIso: string
+}
+
+function isServerRequestId(value: unknown): value is string | number {
+  return (typeof value === 'string' && value.length > 0) ||
+    (typeof value === 'number' && Number.isInteger(value))
 }
 
 type ChatgptAuthTokensRefreshParams = {
@@ -6470,7 +6475,7 @@ export class AppServerProcess {
   private stopping = false
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
-  private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
+  private readonly pendingServerRequests = new Map<string | number, PendingServerRequest>()
   private readonly streamEventsByThreadId = new Map<string, StreamEventFrame[]>()
   private readonly lastThreadReadSnapshotByThreadId = new Map<string, unknown>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
@@ -6592,7 +6597,7 @@ export class AppServerProcess {
       return
     }
 
-    if (typeof message.id === 'number' && this.pending.has(message.id)) {
+    if (message.method === undefined && typeof message.id === 'number' && this.pending.has(message.id)) {
       const pendingRequest = this.pending.get(message.id)
       this.pending.delete(message.id)
 
@@ -6606,9 +6611,12 @@ export class AppServerProcess {
       return
     }
 
-    if (typeof message.method === 'string' && typeof message.id !== 'number') {
+    if (typeof message.method === 'string' && message.id === undefined) {
       if (message.method === 'serverRequest/resolved') {
         this.clearResolvedServerRequest(message.params)
+      }
+      if (message.method === 'turn/completed') {
+        this.clearThreadServerRequests(message.params)
       }
       this.emitNotification({
         method: message.method,
@@ -6618,7 +6626,7 @@ export class AppServerProcess {
     }
 
     // Handle server-initiated JSON-RPC requests (approvals, dynamic tool calls, etc.).
-    if (typeof message.id === 'number' && typeof message.method === 'string') {
+    if (isServerRequestId(message.id) && typeof message.method === 'string') {
       this.handleServerRequest(message.id, message.method, message.params ?? null)
     }
   }
@@ -6626,8 +6634,19 @@ export class AppServerProcess {
   private clearResolvedServerRequest(params: unknown): void {
     const record = asRecord(params)
     const requestId = record?.requestId ?? record?.id
-    if (typeof requestId !== 'number' || !Number.isInteger(requestId)) return
+    if (!isServerRequestId(requestId)) return
     this.pendingServerRequests.delete(requestId)
+  }
+
+  private clearThreadServerRequests(params: unknown): void {
+    const threadId = this.extractThreadIdFromParams(params)
+    if (!threadId) return
+    for (const [requestId, request] of this.pendingServerRequests) {
+      const requestParams = asRecord(request.params)
+      if (readNonEmptyString(requestParams?.threadId ?? requestParams?.thread_id) === threadId) {
+        this.pendingServerRequests.delete(requestId)
+      }
+    }
   }
 
   private emitNotification(notification: { method: string; params: unknown }): void {
@@ -6791,7 +6810,7 @@ export class AppServerProcess {
     })
   }
 
-  private sendServerRequestReply(requestId: number, reply: ServerRequestReply): void {
+  private sendServerRequestReply(requestId: string | number, reply: ServerRequestReply): void {
     if (reply.error) {
       this.sendLine({
         jsonrpc: '2.0',
@@ -6808,7 +6827,7 @@ export class AppServerProcess {
     })
   }
 
-  private resolvePendingServerRequest(requestId: number, reply: ServerRequestReply): void {
+  private resolvePendingServerRequest(requestId: string | number, reply: ServerRequestReply): void {
     const pendingRequest = this.pendingServerRequests.get(requestId)
     if (!pendingRequest) {
       throw new Error(`No pending server request found for id ${String(requestId)}`)
@@ -6816,21 +6835,6 @@ export class AppServerProcess {
     this.pendingServerRequests.delete(requestId)
 
     this.sendServerRequestReply(requestId, reply)
-    const requestParams = asRecord(pendingRequest.params)
-    const threadId =
-      typeof requestParams?.threadId === 'string' && requestParams.threadId.length > 0
-        ? requestParams.threadId
-        : ''
-    this.emitNotification({
-      method: 'server/request/resolved',
-      params: {
-        id: requestId,
-        method: pendingRequest.method,
-        threadId,
-        mode: 'manual',
-        resolvedAtIso: new Date().toISOString(),
-      },
-    })
   }
 
   private async refreshChatgptAuthTokens(params: ChatgptAuthTokensRefreshParams): Promise<ChatgptAuthTokensRefreshResponse> {
@@ -6842,7 +6846,7 @@ export class AppServerProcess {
     return await this.chatgptAuthRefreshPromise
   }
 
-  private async handleChatgptAuthTokensRefreshRequest(requestId: number, params: unknown): Promise<void> {
+  private async handleChatgptAuthTokensRefreshRequest(requestId: string | number, params: unknown): Promise<void> {
     const requestParams = asRecord(params)
     const previousAccountId = readNonEmptyString(requestParams?.previousAccountId ?? requestParams?.previous_account_id)
     try {
@@ -6851,15 +6855,6 @@ export class AppServerProcess {
         previousAccountId: previousAccountId || undefined,
       })
       this.sendServerRequestReply(requestId, { result })
-      this.emitNotification({
-        method: 'server/request/resolved',
-        params: {
-          id: requestId,
-          method: 'account/chatgptAuthTokens/refresh',
-          mode: 'automatic',
-          resolvedAtIso: new Date().toISOString(),
-        },
-      })
     } catch (error) {
       this.sendServerRequestReply(requestId, {
         error: {
@@ -6870,7 +6865,7 @@ export class AppServerProcess {
     }
   }
 
-  private handleServerRequest(requestId: number, method: string, params: unknown): void {
+  private handleServerRequest(requestId: string | number, method: string, params: unknown): void {
     if (method === 'account/chatgptAuthTokens/refresh') {
       void this.handleChatgptAuthTokensRefreshRequest(requestId, params)
       return
@@ -6958,8 +6953,8 @@ export class AppServerProcess {
     }
 
     const id = body.id
-    if (typeof id !== 'number' || !Number.isInteger(id)) {
-      throw new Error('Invalid response payload: "id" must be an integer')
+    if (!isServerRequestId(id)) {
+      throw new Error('Invalid response payload: "id" must be a string or integer')
     }
 
     const rawError = asRecord(body.error)
@@ -7223,7 +7218,7 @@ export class BackendQueueProcessor {
       if (localImagePath) {
         input.push({ type: 'localImage', path: localImagePath })
       } else {
-        input.push({ type: 'image', url: normalizedUrl, image_url: normalizedUrl })
+        input.push({ type: 'image', url: normalizedUrl })
       }
     }
 
@@ -7235,10 +7230,6 @@ export class BackendQueueProcessor {
       threadId: turn.threadId,
       input,
     }
-    if (dedupedFileAttachments.length > 0) {
-      params.attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
-    }
-
     const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
     params.collaborationMode = {
       mode: turn.message.collaborationMode,

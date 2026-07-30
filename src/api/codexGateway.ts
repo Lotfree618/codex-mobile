@@ -1422,7 +1422,7 @@ export async function getThreadTerminalSnapshot(threadId: string): Promise<Threa
 }
 
 export async function replyToServerRequest(
-  id: number,
+  id: string | number,
   payload: { result?: unknown; error?: { code?: number; message: string } },
 ): Promise<void> {
   await respondServerRequest({
@@ -1942,7 +1942,6 @@ export async function startThreadTurn(
       input.push({
         type: 'image',
         url: normalizedUrl,
-        image_url: normalizedUrl,
       })
     }
     if (skills) {
@@ -1950,12 +1949,10 @@ export async function startThreadTurn(
         input.push({ type: 'skill', name: skill.name, path: skill.path })
       }
     }
-    const attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
     const params: Record<string, unknown> = {
       threadId,
       input,
     }
-    if (attachments.length > 0) params.attachments = attachments
     if (normalizedModel) {
       params.model = normalizedModel
     }
@@ -1977,6 +1974,65 @@ export async function startThreadTurn(
     return typeof payload?.turn?.id === 'string' ? payload.turn.id.trim() : ''
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to start turn for thread ${threadId}`, 'turn/start')
+  }
+}
+
+export async function steerThreadTurn(
+  threadId: string,
+  expectedTurnId: string,
+  text: string,
+  imageUrls: string[] = [],
+  skills: Array<{ name: string; path: string }> = [],
+  fileAttachments: FileAttachmentParam[] = [],
+): Promise<string> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedTurnId = expectedTurnId.trim()
+  if (!normalizedThreadId || !normalizedTurnId) {
+    throw new Error('turn/steer requires threadId and expectedTurnId')
+  }
+
+  const localImageAttachments: FileAttachmentParam[] = []
+  for (const imageUrl of imageUrls) {
+    const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
+    if (!localImagePath) continue
+    localImageAttachments.push({
+      label: fileNameFromPath(localImagePath),
+      path: localImagePath,
+      fsPath: localImagePath,
+    })
+  }
+  const allFileAttachments = [...fileAttachments, ...localImageAttachments]
+  const dedupedFileAttachments = allFileAttachments.filter((entry, index) =>
+    allFileAttachments.findIndex((candidate) => candidate.fsPath === entry.fsPath) === index)
+  const input: Array<Record<string, unknown>> = [{
+    type: 'text',
+    text: buildTextWithAttachments(text, dedupedFileAttachments),
+  }]
+  for (const imageUrl of imageUrls) {
+    const normalizedUrl = imageUrl.trim()
+    if (!normalizedUrl) continue
+    const localImagePath = extractLocalImagePathFromUrl(normalizedUrl)
+    input.push(localImagePath
+      ? { type: 'localImage', path: localImagePath }
+      : { type: 'image', url: normalizedUrl })
+  }
+  for (const skill of skills) {
+    input.push({ type: 'skill', name: skill.name, path: skill.path })
+  }
+
+  try {
+    const payload = await callRpc<{ turnId?: unknown }>('turn/steer', {
+      threadId: normalizedThreadId,
+      expectedTurnId: normalizedTurnId,
+      input,
+    })
+    const turnId = readString(asRecord(payload)?.turnId)?.trim() ?? ''
+    if (!turnId) {
+      throw new Error('turn/steer did not return a turn id')
+    }
+    return turnId
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to steer turn for thread ${normalizedThreadId}`, 'turn/steer')
   }
 }
 

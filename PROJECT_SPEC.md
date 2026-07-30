@@ -247,7 +247,7 @@ Communication uses newline-delimited JSON-RPC 2.0 over stdin/stdout of the `code
 | `item/reasoning/summaryTextDelta` | Append to live reasoning overlay |
 | `item/reasoning/summaryPartAdded` | Insert reasoning section break |
 | `server/request` | Show pending approval in UI |
-| `server/request/resolved` | Remove resolved request from UI |
+| `serverRequest/resolved` | Remove resolved request from UI |
 | `error` | Display error notification |
 | `thread/name/updated` | (Queued for thread list refresh) |
 
