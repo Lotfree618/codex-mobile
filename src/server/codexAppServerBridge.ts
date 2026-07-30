@@ -6482,7 +6482,7 @@ const MERGEABLE_ITEM_TYPES = new Set([
   'fileChange',
 ])
 
-class AppServerProcess {
+export class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private initialized = false
   private initializePromise: Promise<void> | null = null
@@ -6630,6 +6630,9 @@ class AppServerProcess {
     }
 
     if (typeof message.method === 'string' && typeof message.id !== 'number') {
+      if (message.method === 'serverRequest/resolved') {
+        this.clearResolvedServerRequest(message.params)
+      }
       this.emitNotification({
         method: message.method,
         params: message.params ?? null,
@@ -6641,6 +6644,13 @@ class AppServerProcess {
     if (typeof message.id === 'number' && typeof message.method === 'string') {
       this.handleServerRequest(message.id, message.method, message.params ?? null)
     }
+  }
+
+  private clearResolvedServerRequest(params: unknown): void {
+    const record = asRecord(params)
+    const requestId = record?.requestId ?? record?.id
+    if (typeof requestId !== 'number' || !Number.isInteger(requestId)) return
+    this.pendingServerRequests.delete(requestId)
   }
 
   private emitNotification(notification: { method: string; params: unknown }): void {
@@ -6957,10 +6967,12 @@ class AppServerProcess {
     this.initializePromise = this.call('initialize', {
       clientInfo: {
         name: 'codex-web-local',
+        title: 'Codex Web Local',
         version: '0.1.0',
       },
       capabilities: {
         experimentalApi: true,
+        requestAttestation: false,
       },
     }).then(() => {
       this.sendLine({
@@ -7207,13 +7219,8 @@ export class BackendQueueProcessor {
   }
 
   private async resolveCollaborationModeSettings(mode: CollaborationModeKind): Promise<ResolvedCollaborationModeSettings> {
-    let currentConfig: Record<string, unknown> | null = null
-    try {
-      const configPayload = asRecord(await this.appServer.rpc('config/read', {}))
-      currentConfig = asRecord(configPayload?.config)
-    } catch {
-      currentConfig = null
-    }
+    const configPayload = asRecord(await this.appServer.rpc('config/read', {}))
+    const currentConfig = asRecord(configPayload?.config)
 
     const configuredModel = readNonEmptyString(currentConfig?.model)
     if (configuredModel) {
@@ -7223,21 +7230,17 @@ export class BackendQueueProcessor {
       }
     }
 
-    try {
-      const modelsPayload = asRecord(await this.appServer.rpc('model/list', {}))
-      const models = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
-      for (const row of models) {
-        const record = asRecord(row)
-        const candidate = readNonEmptyString(record?.id) || readNonEmptyString(record?.model)
-        if (candidate) {
-          return {
-            model: candidate,
-            reasoningEffort: normalizeCollaborationModeReasoningEffort(normalizeReasoningEffort(currentConfig?.model_reasoning_effort)),
-          }
+    const modelsPayload = asRecord(await this.appServer.rpc('model/list', {}))
+    const models = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
+    for (const row of models) {
+      const record = asRecord(row)
+      const candidate = readNonEmptyString(record?.id) || readNonEmptyString(record?.model)
+      if (candidate) {
+        return {
+          model: candidate,
+          reasoningEffort: normalizeCollaborationModeReasoningEffort(normalizeReasoningEffort(currentConfig?.model_reasoning_effort)),
         }
       }
-    } catch {
-      // Fall through to no collaboration-mode payload.
     }
 
     throw new Error(`${mode === 'plan' ? 'Plan' : 'Default'} mode requires an available model.`)
@@ -7287,18 +7290,14 @@ export class BackendQueueProcessor {
       params.attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
     }
 
-    try {
-      const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
-      params.collaborationMode = {
-        mode: turn.message.collaborationMode,
-        settings: {
-          model: settings.model,
-          reasoning_effort: settings.reasoningEffort,
-          developer_instructions: null,
-        },
-      }
-    } catch {
-      // Older app-server versions still accept a plain turn/start without collaborationMode.
+    const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
+    params.collaborationMode = {
+      mode: turn.message.collaborationMode,
+      settings: {
+        model: settings.model,
+        reasoning_effort: settings.reasoningEffort,
+        developer_instructions: null,
+      },
     }
 
     return params

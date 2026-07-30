@@ -3183,7 +3183,7 @@ export function useDesktopState() {
 
     if (notification.method === 'server/request/resolved') {
       const row = asRecord(notification.params)
-      const id = row?.id
+      const id = row?.requestId ?? row?.id
       if (typeof id === 'number' && Number.isInteger(id)) {
         removePendingServerRequestById(id)
       }
