@@ -411,6 +411,29 @@ describe('thread session skill recovery', () => {
 })
 
 describe('backend queue scheduling', () => {
+  it.each([
+    ['idle', true],
+    ['active', false],
+    ['notLoaded', false],
+    ['systemError', false],
+  ])('uses metadata-only thread status %s before draining', async (statusType, expected) => {
+    const rpc = vi.fn().mockResolvedValue({ thread: { status: { type: statusType } } })
+    const processor = new BackendQueueProcessor({
+      onNotification: () => () => undefined,
+      rpc,
+    } as never)
+
+    await expect((processor as unknown as {
+      canStartQueuedTurn: (threadId: string) => Promise<boolean>
+    }).canStartQueuedTurn('thread-1')).resolves.toBe(expected)
+    expect(rpc).toHaveBeenCalledWith('thread/read', {
+      threadId: 'thread-1',
+      includeTurns: false,
+    })
+
+    processor.dispose()
+  })
+
   it('reschedules a pending drain when a run-now request needs an earlier drain', async () => {
     vi.useFakeTimers()
     const processor = new BackendQueueProcessor({

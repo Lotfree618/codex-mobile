@@ -7119,16 +7119,13 @@ export class BackendQueueProcessor {
   }
 
   private async canStartQueuedTurn(threadId: string): Promise<boolean> {
-    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: true }))
+    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: false }))
     const thread = asRecord(response?.thread)
     if (!thread) return false
 
     const status = asRecord(thread.status)
     const statusType = readNonEmptyString(status?.type)
-    if (statusType === 'inProgress' || statusType === 'running' || statusType === 'active') return false
-
-    const turns = Array.isArray(thread.turns) ? thread.turns : []
-    return !turns.some((turn) => readNonEmptyString(asRecord(turn)?.status) === 'inProgress')
+    return statusType === 'idle'
   }
 
   private async popNextQueuedTurn(threadId: string): Promise<BackendQueuedTurn | null> {
