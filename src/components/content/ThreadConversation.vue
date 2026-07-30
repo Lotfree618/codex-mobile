@@ -591,14 +591,6 @@
                     </button>
                   </template>
                 </div>
-                <a
-                  v-if="isTurnErrorMessage(message)"
-                  class="turn-error-feedback"
-                  :href="feedbackMailto"
-                  @click="prepareTurnErrorFeedback($event, message.text)"
-                >
-                  Send feedback
-                </a>
               </article>
 
               <section v-if="readAnchoredFileChangeSummary(message)" class="file-change-summary-block file-change-summary-block-inline">
@@ -745,7 +737,6 @@
               </p>
               <div v-if="liveOverlay.errorText" class="live-overlay-error">
                 <span>{{ liveOverlay.errorText }}</span>
-                <a class="live-overlay-feedback" :href="feedbackMailto" @click="prepareLiveErrorFeedback($event, liveOverlay.errorText)">Send feedback</a>
               </div>
             </article>
           </div>
@@ -920,7 +911,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiFileChange, UiLiveOverlay, UiMessage, UiPlanStep, UiServerRequest } from '../../types/codex'
 import { updateThreadFileChanges } from '../../api/codexGateway'
-import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useMobile } from '../../composables/useMobile'
 import { copyTextToClipboard, copyTextWithSelectionFallback } from '../../utils/clipboard'
 
@@ -948,24 +938,6 @@ const fileLinkContextMenuY = ref(0)
 const fileLinkContextBrowseUrl = ref('')
 const fileLinkContextEditUrl = ref('')
 const { isMobile } = useMobile()
-const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
-const feedbackMailto = feedbackMailtoBase()
-
-function prepareLiveErrorFeedback(event: MouseEvent, message: string): void {
-  recordVisibleFailure(message)
-  const target = event.currentTarget
-  if (target instanceof HTMLAnchorElement) {
-    target.href = buildFeedbackMailto()
-  }
-}
-
-function prepareTurnErrorFeedback(event: MouseEvent, message: string): void {
-  recordVisibleFailure(message)
-  const target = event.currentTarget
-  if (target instanceof HTMLAnchorElement) {
-    target.href = buildFeedbackMailto()
-  }
-}
 
 function parsePlanFromMessageText(text: string): { explanation: string; steps: UiPlanStep[] } | null {
   const normalized = text.replace(/\r\n/g, '\n').trim()
@@ -1020,10 +992,6 @@ function isCommandMessage(message: UiMessage): boolean {
 
 function isPlanMessage(message: UiMessage): boolean {
   return message.messageType === 'plan' || message.messageType === 'plan.live'
-}
-
-function isTurnErrorMessage(message: UiMessage): boolean {
-  return message.messageType === 'turnError'
 }
 
 function buildPlanMessageText(explanation: string, steps: UiPlanStep[]): string {
@@ -4648,14 +4616,6 @@ onBeforeUnmount(() => {
 
 .live-overlay-error {
   @apply m-0 flex items-start justify-between gap-3 text-sm leading-5 text-rose-600 whitespace-pre-wrap;
-}
-
-.live-overlay-feedback {
-  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
-}
-
-.turn-error-feedback {
-  @apply mt-3 inline-flex w-fit rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold leading-none text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .message-body {

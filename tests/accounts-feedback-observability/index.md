@@ -1,6 +1,6 @@
-# Accounts, Feedback, and Observability
+# Accounts and Observability
 
-Account panels, quota refresh, feedback diagnostics, Sentry, browser profiling, API perf logs, and Qodo diagnostic fixes.
+Account panels, quota refresh, Sentry, browser profiling, API perf logs, and Qodo diagnostic fixes.
 
 Return to the [manual test index](../../tests.md).
 
@@ -8,8 +8,6 @@ Return to the [manual test index](../../tests.md).
 
 | Section |
 | --- |
-| [Qodo feedback diagnostics reliability fixes](qodo-feedback-diagnostics-reliability-fixes.md) |
-| [Error-triggered feedback button](error-triggered-feedback-button.md) |
 | [Qodo review fixes for PR 130 and PR 131 reverts](qodo-review-fixes-for-pr-130-and-pr-131-reverts.md) |
 | [Feature: Import 10 working DB accounts and keep Accounts section collapsed by default](import-10-working-db-accounts-and-keep-accounts-section-collapsed-by-default.md) |
 | [Feature: Copy Codex accounts to Android via ssh helper script](copy-codex-accounts-to-android-via-ssh-helper-script.md) |

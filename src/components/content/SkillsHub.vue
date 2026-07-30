@@ -27,14 +27,12 @@
       </div>
       <div v-if="syncStatus.startup.lastError" class="skills-sync-error">
         <span>{{ syncStatus.startup.lastError }}</span>
-        <a class="skills-error-feedback" :href="feedbackMailto" @click="prepareSkillsErrorFeedback($event, syncStatus.startup.lastError)">{{ t('Send feedback') }}</a>
       </div>
       <div v-if="syncActionStatus" class="skills-sync-meta">
         <span>{{ t('Manual sync') }}: {{ syncActionStatus }}</span>
       </div>
       <div v-if="syncActionError" class="skills-sync-error">
         <span>{{ syncActionError }}</span>
-        <a class="skills-error-feedback" :href="feedbackMailto" @click="prepareSkillsErrorFeedback($event, syncActionError)">{{ t('Send feedback') }}</a>
       </div>
       <div v-if="deviceLogin" class="skills-sync-device">
         <span>{{ t('Open') }} <a :href="deviceLogin.verification_uri" target="_blank" rel="noreferrer">{{ t('GitHub device login') }}</a> {{ t('and enter code:') }}</span>
@@ -81,7 +79,6 @@
       </form>
       <div v-if="skillSearchError" class="skills-hub-error">
         <span>{{ skillSearchError }}</span>
-        <a class="skills-error-feedback" :href="feedbackMailto" @click="prepareSkillsErrorFeedback($event, skillSearchError)">{{ t('Send feedback') }}</a>
       </div>
     </div>
 
@@ -124,7 +121,6 @@
       <div v-if="isLoading" class="skills-hub-loading">{{ t('Loading skills...') }}</div>
       <div v-else-if="error" class="skills-hub-error">
         <span>{{ error }}</span>
-        <a class="skills-error-feedback" :href="feedbackMailto" @click="prepareSkillsErrorFeedback($event, error)">{{ t('Send feedback') }}</a>
       </div>
       <div v-else-if="installedSkills.length === 0" class="skills-hub-empty">{{ t('No installed skills found.') }}</div>
     </div>
@@ -145,12 +141,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import IconTablerChevronRight from '../icons/IconTablerChevronRight.vue'
 import SkillCard from './SkillCard.vue'
 import SkillDetailModal, { type HubSkill } from './SkillDetailModal.vue'
 import { useGithubSkillsSync } from '../../composables/useGithubSkillsSync'
-import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { useUiLanguage } from '../../composables/useUiLanguage'
 
 const EMPTY_SKILL: HubSkill = { name: '', owner: '', description: '', url: '', installed: false }
@@ -174,8 +169,6 @@ const isInstallActionInFlight = ref(false)
 const isUninstallActionInFlight = ref(false)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 const { t } = useUiLanguage()
-const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
-const feedbackMailto = feedbackMailtoBase()
 
 const props = defineProps<{
   tryInFlightKey?: string
@@ -207,14 +200,6 @@ function showToast(text: string, type: 'success' | 'error' = 'success'): void {
   toast.value = { text, type }
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toast.value = null }, 3000)
-}
-
-function prepareSkillsErrorFeedback(event: MouseEvent, message: string): void {
-  recordVisibleFailure(message)
-  const target = event.currentTarget
-  if (target instanceof HTMLAnchorElement) {
-    target.href = buildFeedbackMailto()
-  }
 }
 
 function applySkillsPayload(payload: SkillsHubPayload): void {
@@ -398,26 +383,9 @@ const {
     emit('skills-changed')
   },
 })
-const visibleSkillErrors = [
-  computed(() => syncStatus.value.startup.lastError),
-  syncActionError,
-  skillSearchError,
-  error,
-]
-
 onMounted(() => {
   void fetchSkills()
   void loadSyncStatus()
-})
-
-watch(visibleSkillErrors, (values, oldValues) => {
-  values.forEach((value, index) => {
-    if (value === oldValues[index]) return
-    const message = value.trim()
-    if (message) {
-      recordVisibleFailure(message)
-    }
-  })
 })
 </script>
 
@@ -546,10 +514,6 @@ watch(visibleSkillErrors, (values, oldValues) => {
 
 .skills-hub-error {
   @apply flex items-start justify-between gap-3 text-sm text-rose-600 p-4 text-left rounded-lg border border-rose-200 bg-rose-50;
-}
-
-.skills-error-feedback {
-  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .skills-hub-empty {

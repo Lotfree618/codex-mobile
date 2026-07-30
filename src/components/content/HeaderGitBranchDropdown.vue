@@ -33,7 +33,6 @@
 
         <div v-if="statusMessage" class="header-git-status" :class="{ 'is-error': statusKind === 'error' }">
           <span>{{ statusMessage }}</span>
-          <a v-if="statusKind === 'error'" class="header-git-feedback" :href="feedbackMailto" @click="prepareHeaderFeedback($event, statusMessage)">Send feedback</a>
         </div>
 
         <div class="header-git-columns" :class="{ 'has-commit-files': Boolean(selectedCommit) }">
@@ -193,7 +192,6 @@ import type { GitCommitFileChange, GitCommitOption, WorktreeBranchOption } from 
 import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerGitFork from '../icons/IconTablerGitFork.vue'
-import { useFeedbackDiagnostics } from '../../composables/useFeedbackDiagnostics'
 import { copyTextToClipboard } from '../../utils/clipboard'
 
 const props = defineProps<{
@@ -238,16 +236,6 @@ const copiedCommitSha = ref('')
 const lastCurrentBranch = ref('')
 const showResetHistoryRefs = ref(true)
 const showReview = computed(() => props.showReview !== false)
-const { buildFeedbackMailto, feedbackMailtoBase, recordVisibleFailure } = useFeedbackDiagnostics()
-const feedbackMailto = feedbackMailtoBase()
-
-function prepareHeaderFeedback(event: MouseEvent, message: string): void {
-  recordVisibleFailure(message)
-  const target = event.currentTarget
-  if (target instanceof HTMLAnchorElement) {
-    target.href = buildFeedbackMailto()
-  }
-}
 
 const displayLabel = computed(() => {
   if (props.currentBranch) return props.currentBranch
@@ -641,10 +629,6 @@ onBeforeUnmount(() => window.removeEventListener('pointerdown', onDocumentPointe
 
 .header-git-commits-empty.is-error {
   @apply flex items-start justify-between gap-2 text-red-700;
-}
-
-.header-git-feedback {
-  @apply shrink-0 rounded-full border border-red-200 bg-white px-2 py-0.5 text-[0.65rem] font-semibold text-red-700 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200;
 }
 
 .header-git-commit-detail-head {

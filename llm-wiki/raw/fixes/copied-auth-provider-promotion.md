@@ -10,7 +10,6 @@ Observed issues:
 - Provider stayed on OpenRouter after valid Codex auth appeared.
 - The Accounts badge stayed at `0` until a manual account refresh.
 - The new-thread composer could show a generic `Model` label after provider promotion.
-- The Settings feedback row could show stale `Send feedback / Issue detected` after recovery even when there was no visible current error.
 - Sending on Codex worked after manually switching provider, proving the copied auth file was valid.
 
 ## Root Cause
@@ -55,8 +54,7 @@ Flow:
 6. Confirm provider changes to `codex`.
 7. Confirm Accounts count becomes `1`.
 8. Confirm the composer shows a concrete Codex model, not generic `Model`.
-9. Confirm no stale `Send feedback / Issue detected` row appears.
-10. Send `hi`; wait for a Codex reply.
+9. Send `hi`; wait for a Codex reply.
 
 Final validation result:
 

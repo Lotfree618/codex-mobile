@@ -16,8 +16,7 @@ Runtime auth detection after starting without auth.
 3. Copy a valid `auth.json` into the mounted `CODEX_HOME`.
 4. Reload the page.
 5. Confirm the provider has moved to Codex, the composer shows a concrete Codex model instead of a generic `Model` placeholder, and the Accounts count imports the active auth account.
-6. Confirm the sidebar does not show a stale `Send feedback` / `Issue detected` row when there is no current visible error.
-7. Send `hi` on the Codex provider and wait for an assistant reply.
+6. Send `hi` on the Codex provider and wait for an assistant reply.
 
 #### Expected Results
 - Community fallback providers are suppressed once usable Codex auth appears.
@@ -25,7 +24,6 @@ Runtime auth detection after starting without auth.
 - The app refreshes model metadata after provider promotion so the composer does not stay on a generic `Model` label.
 - The copied auth file is imported into the accounts list without requiring a manual Reload click after Codex quota metadata loads successfully.
 - Invalid or expired copied auth is not imported during startup before a successful quota read, so the first failed send still renders a chat error instead of leaving the thread empty.
-- The Settings feedback row is hidden after provider/account recovery unless there is still a visible error.
 - The Codex provider can send a message successfully after auth promotion.
 
 #### Rollback/Cleanup

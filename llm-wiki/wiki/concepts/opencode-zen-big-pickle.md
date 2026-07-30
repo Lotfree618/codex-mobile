@@ -79,7 +79,6 @@ Expected behavior after copying auth and reloading:
 - Provider promotes to Codex.
 - Accounts imports the copied active auth file and the badge updates from `0` to at least `1`.
 - The new-thread composer shows a concrete Codex model, not a generic `Model` placeholder.
-- Stale historical diagnostics do not show a `Send feedback / Issue detected` row unless a current visible error remains.
 
 User-configured provider state is preserved: OpenRouter with `customKey: true`, OpenCode Zen with an explicit API key, and custom endpoint providers should not be suppressed merely because Codex auth exists.
 
