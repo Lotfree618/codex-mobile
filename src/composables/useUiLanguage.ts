@@ -116,6 +116,7 @@ const zhCN: Record<string, string> = {
   'Take photo': '拍照',
   'In-progress send': '执行中发送',
   'Fast mode': '快速模式',
+  'Extra high': '极高',
   'Plan mode': '规划模式',
   'Agent proposes a plan before acting': '代理在执行前先提出计划',
   'Model': '模型',
@@ -409,6 +410,8 @@ const zhCN: Record<string, string> = {
   'Show or hide GitHub trending project cards on the new thread screen.': '显示或隐藏新线程页面上的 GitHub 热门项目卡片。',
   'Choose transcription language or keep auto-detect.': '选择转写语言，或保持自动检测。',
   'Standard': '标准',
+  'Max': '最高',
+  'Ultra': '超强',
   'Wide': '宽',
   'Extra wide': '超宽',
 }

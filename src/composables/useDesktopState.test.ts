@@ -16,6 +16,7 @@ const gatewayMocks = vi.hoisted(() => ({
   forkThread: vi.fn(),
   getAccountRateLimits: vi.fn(),
   getAvailableCollaborationModes: vi.fn(),
+  getAvailableModelCatalog: vi.fn(),
   getAvailableModelIds: vi.fn(),
   getCurrentModelConfig: vi.fn(),
   getPendingServerRequests: vi.fn(),
@@ -39,6 +40,11 @@ const gatewayMocks = vi.hoisted(() => ({
   startThread: vi.fn(),
   startThreadTurn: vi.fn(),
   subscribeCodexNotifications: vi.fn(),
+}))
+
+gatewayMocks.getAvailableModelCatalog.mockImplementation(async (...args: Parameters<typeof gatewayMocks.getAvailableModelIds>) => ({
+  ids: await gatewayMocks.getAvailableModelIds(...args),
+  reasoningCapabilitiesByModelId: {},
 }))
 
 vi.mock('../api/codexGateway', () => ({
@@ -798,6 +804,38 @@ describe('live error overlay', () => {
 })
 
 describe('provider model selection', () => {
+  it('uses the selected GPT-5.6 model capabilities for Max and Ultra', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-5.6-terra',
+      providerId: 'codex-lb',
+      reasoningEffort: 'xhigh',
+      speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelCatalog.mockResolvedValueOnce({
+      ids: ['gpt-5.6-terra'],
+      reasoningCapabilitiesByModelId: {
+        'gpt-5.6-terra': {
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultEffort: 'medium',
+        },
+      },
+    })
+
+    const state = useDesktopState()
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.availableReasoningEfforts.value).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+
+    state.setSelectedReasoningEffort('max')
+    expect(state.selectedReasoningEffort.value).toBe('max')
+  })
+
   it('ignores global selected-model localStorage when OpenCode Zen is the active provider', async () => {
     installTestWindow({
       'codex-web-local.selected-model-by-context.v1': JSON.stringify({

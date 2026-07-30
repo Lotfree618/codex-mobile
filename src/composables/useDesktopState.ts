@@ -6,7 +6,7 @@ import {
   getAvailableCollaborationModes,
   getAccountRateLimits,
   renameThread,
-  getAvailableModelIds,
+  getAvailableModelCatalog,
   getCurrentModelConfig,
   getPendingServerRequests,
   getSkillsList,
@@ -33,6 +33,7 @@ import {
   subscribeCodexNotifications,
   startThreadTurn,
   type RpcNotification,
+  type ModelReasoningCapability,
   type SkillInfo,
   type ThreadQueueState,
   type WorkspaceRootsState,
@@ -91,7 +92,7 @@ const TURN_START_FOLLOW_UP_SYNC_DELAY_MS = 3000
 const RECENT_THREAD_MESSAGE_LOAD_REUSE_MS = 2000
 const RECENT_THREAD_LIST_LOAD_REUSE_MS = 2000
 const RECENT_SKILLS_LOAD_REUSE_MS = 2000
-const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const FALLBACK_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
 const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
@@ -1441,6 +1442,7 @@ export function useDesktopState() {
   )
   const selectedModelId = ref(readSelectedModel(selectedModelIdByContext.value, selectedThreadId.value))
   const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
+  const reasoningCapabilitiesByModelId = ref<Record<string, ModelReasoningCapability>>({})
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
   const codexCliMissingError = ref('')
@@ -1484,6 +1486,22 @@ export function useDesktopState() {
   const error = ref('')
   const isPolling = ref(false)
   const hasLoadedThreads = ref(false)
+
+  function reasoningCapabilityForModel(modelId: string): ModelReasoningCapability | null {
+    return reasoningCapabilitiesByModelId.value[modelId.trim()] ?? null
+  }
+
+  const availableReasoningEfforts = computed<ReasoningEffort[]>(() => {
+    const capability = reasoningCapabilityForModel(readModelIdForThread(selectedThreadId.value))
+    return capability?.efforts.length ? capability.efforts : FALLBACK_REASONING_EFFORT_OPTIONS
+  })
+
+  function reconcileSelectedReasoningEffortForModel(modelId: string): void {
+    const capability = reasoningCapabilityForModel(modelId)
+    if (!capability || capability.efforts.length === 0) return
+    if (selectedReasoningEffort.value && capability.efforts.includes(selectedReasoningEffort.value)) return
+    selectedReasoningEffort.value = capability.defaultEffort || capability.efforts[0] || ''
+  }
 
   function extractLocalImagePathFromUrl(value: string): string {
     try {
@@ -1686,6 +1704,7 @@ export function useDesktopState() {
       saveSelectedThreadId(nextThreadId)
     }
     selectedModelId.value = readProviderCompatibleSelectedModel(readModelIdForThread(nextThreadId))
+    reconcileSelectedReasoningEffortForModel(selectedModelId.value)
     selectedCollaborationMode.value = readSelectedCollaborationMode(
       selectedCollaborationModeByContext.value,
       nextThreadId,
@@ -1720,6 +1739,7 @@ export function useDesktopState() {
     if (threadId.trim() === selectedThreadId.value) {
       selectedModelId.value = readModelIdForThread(selectedThreadId.value)
       ensureAvailableModelIds(selectedModelId.value)
+      reconcileSelectedReasoningEffortForModel(selectedModelId.value)
     } else {
       ensureAvailableModelIds(normalizedModelId)
     }
@@ -1745,6 +1765,7 @@ export function useDesktopState() {
     ensureAvailableModelIds(normalizedModelId)
     if (selectedThreadId.value === normalizedThreadId) {
       selectedModelId.value = readModelIdForThread(selectedThreadId.value)
+      reconcileSelectedReasoningEffortForModel(selectedModelId.value)
     }
     saveSelectedModelMap(selectedModelIdByContext.value)
   }
@@ -1931,7 +1952,7 @@ export function useDesktopState() {
   }
 
   function setSelectedReasoningEffort(effort: ReasoningEffort | ''): void {
-    if (effort && !REASONING_EFFORT_OPTIONS.includes(effort)) {
+    if (effort && !availableReasoningEfforts.value.includes(effort)) {
       return
     }
     selectedReasoningEffort.value = effort
@@ -1992,11 +2013,13 @@ export function useDesktopState() {
       const targetProviderId = readProviderIdForThread(selectedThreadId.value)
       const isProviderBacked = targetProviderId !== 'codex'
       const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
-      const modelIds = await getAvailableModelIds({
+      const modelCatalog = await getAvailableModelCatalog({
         includeProviderModels: isProviderBacked || options?.includeProviderModels !== false,
         requireProviderModels: isProviderBacked,
         providerId: isProviderBacked ? targetProviderId : undefined,
       })
+      const modelIds = modelCatalog.ids
+      reasoningCapabilitiesByModelId.value = modelCatalog.reasoningCapabilitiesByModelId
       const providerModelContextId = toProviderModelContextId(targetProviderId)
       const providerScopedModelId = providerModelContextId
         ? normalizeStoredModelId(selectedModelIdByContext.value[providerModelContextId])
@@ -2050,9 +2073,11 @@ export function useDesktopState() {
 
       if (
         currentConfig.reasoningEffort &&
-        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)
+        availableReasoningEfforts.value.includes(currentConfig.reasoningEffort)
       ) {
         selectedReasoningEffort.value = currentConfig.reasoningEffort
+      } else {
+        reconcileSelectedReasoningEffortForModel(readModelIdForThread(selectedThreadId.value))
       }
       selectedSpeedMode.value = currentConfig.speedMode
     } catch (unknownError) {
@@ -5694,6 +5719,7 @@ export function useDesktopState() {
     selectedThreadId,
     availableCollaborationModes,
     availableModelIds,
+    availableReasoningEfforts,
     selectedCollaborationMode,
     selectedModelId,
     selectedReasoningEffort,

@@ -142,9 +142,8 @@
                   </button>
                 </div>
                 <template v-if="!isAccountsSectionCollapsed">
-                  <div v-if="accountActionError" class="sidebar-settings-account-error visible-error-with-feedback">
+                  <div v-if="accountActionError" class="sidebar-settings-account-error">
                     <span>{{ accountActionError }}</span>
-                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
                   </div>
                   <div class="sidebar-settings-account-login">
                     <button
@@ -256,16 +255,6 @@
                 <span class="sidebar-settings-label">{{ t('Auto send dictation') }}</span>
                 <span class="sidebar-settings-toggle" :class="{ 'is-on': dictationAutoSend }" />
               </button>
-              <a
-                v-if="hasVisibleFeedbackError"
-                class="sidebar-settings-row sidebar-settings-feedback-row"
-                :href="feedbackMailto"
-                @click="prepareFeedbackLink"
-              >
-                <span class="sidebar-settings-label">{{ t('Send feedback') }}</span>
-                <span class="sidebar-settings-value">{{ t('Issue detected') }}</span>
-              </a>
-
               <div class="sidebar-settings-row sidebar-settings-row--select" :title="t('Choose the API provider for the Codex backend')">
                 <span class="sidebar-settings-label">{{ t('Provider') }}</span>
                 <ComposerDropdown
@@ -280,7 +269,6 @@
               </div>
               <div v-if="providerError" class="sidebar-settings-row sidebar-settings-error">
                 <span>{{ providerError }}</span>
-                <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, providerError)">{{ t('Send feedback') }}</a>
               </div>
               <div v-if="selectedProvider === 'openrouter'" class="sidebar-settings-row sidebar-settings-row--input">
                 <div class="sidebar-settings-provider-info">
@@ -462,7 +450,6 @@
                 </div>
                 <div v-if="telegramConfigError" class="sidebar-settings-telegram-error">
                   <span>{{ telegramConfigError }}</span>
-                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, telegramConfigError)">{{ t('Send feedback') }}</a>
                 </div>
                 <div class="sidebar-settings-telegram-actions">
                   <button
@@ -740,9 +727,8 @@
                             {{ createFolderSubmitLabel }}
                           </button>
                         </div>
-                        <div v-if="createFolderError" class="new-thread-open-folder-error visible-error-with-feedback">
+                        <div v-if="createFolderError" class="new-thread-open-folder-error">
                           <span>{{ createFolderError }}</span>
-                          <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, createFolderError)">{{ t('Send feedback') }}</a>
                         </div>
                       </div>
                       <input
@@ -754,9 +740,8 @@
                         @keydown.esc.prevent="onCloseExistingFolderPanel"
                       />
                       <div v-if="existingFolderError" class="new-thread-open-folder-error-actions">
-                        <div class="new-thread-open-folder-error visible-error-with-feedback">
+                        <div class="new-thread-open-folder-error">
                           <span>{{ existingFolderError }}</span>
-                          <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, existingFolderError)">{{ t('Send feedback') }}</a>
                         </div>
                         <button
                           class="new-thread-folder-action"
@@ -863,9 +848,8 @@
                           @keydown.enter.prevent="onSubmitProjectSetup"
                         />
                       </label>
-                      <div v-if="projectSetupError" class="new-thread-open-folder-error visible-error-with-feedback">
+                      <div v-if="projectSetupError" class="new-thread-open-folder-error">
                         <span>{{ projectSetupError }}</span>
-                        <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, projectSetupError)">{{ t('Send feedback') }}</a>
                       </div>
                       <div class="new-thread-project-modal-actions">
                         <button class="new-thread-folder-action" type="button" :disabled="isProjectSetupSubmitting" @click="onCloseProjectSetupModal">
@@ -929,7 +913,6 @@
               <div class="composer-with-queue">
                 <div v-if="codexCliMissingError" class="composer-runtime-error" role="alert">
                   <span>{{ t(codexCliMissingError) }}</span>
-                  <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, codexCliMissingError)">{{ t('Send feedback') }}</a>
                 </div>
                 <ThreadTerminalPanel
                   v-if="homeTerminalOpen && composerCwd"
@@ -945,6 +928,7 @@
                   :collaboration-modes="availableCollaborationModes"
                   :selected-collaboration-mode="selectedCollaborationMode"
                   :models="availableModelIds" :selected-model="composerSelectedModelId"
+                  :reasoning-efforts="availableReasoningEfforts"
                   :selected-reasoning-effort="selectedReasoningEffort"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
@@ -994,7 +978,6 @@
                 <div class="composer-with-queue">
                   <div v-if="codexCliMissingError" class="composer-runtime-error" role="alert">
                     <span>{{ t(codexCliMissingError) }}</span>
-                    <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, codexCliMissingError)">{{ t('Send feedback') }}</a>
                   </div>
                   <QueuedMessages
                     :messages="selectedThreadQueuedMessages"
@@ -1028,6 +1011,7 @@
                     :selected-collaboration-mode="selectedCollaborationMode"
                     :models="availableModelIds"
                     :selected-model="composerSelectedModelId"
+                    :reasoning-efforts="availableReasoningEfforts"
                     :selected-reasoning-effort="selectedReasoningEffort"
                     :selected-speed-mode="selectedSpeedMode"
                     :is-updating-speed-mode="isUpdatingSpeedMode"
@@ -1141,9 +1125,8 @@
         :placeholder="t('Paste localhost callback URL')"
         :disabled="isCompletingCodexLogin"
       >
-      <div v-if="accountActionError" class="codex-login-modal-error visible-error-with-feedback">
+      <div v-if="accountActionError" class="codex-login-modal-error">
         <span>{{ accountActionError }}</span>
-        <a class="visible-error-feedback" :href="feedbackMailto" @click="prepareFeedbackLink($event, accountActionError)">{{ t('Send feedback') }}</a>
       </div>
       <div class="codex-login-modal-actions">
         <button
@@ -1188,7 +1171,6 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { useMobile } from './composables/useMobile'
 import { useUiLanguage } from './composables/useUiLanguage'
-import { useFeedbackDiagnostics } from './composables/useFeedbackDiagnostics'
 import {
   checkoutGitBranch,
   cloneGithubRepository,
@@ -1418,6 +1400,7 @@ const {
   selectedThreadId,
   availableCollaborationModes,
   availableModelIds,
+  availableReasoningEfforts,
   selectedCollaborationMode,
   selectedModelId,
   selectedReasoningEffort,
@@ -1488,22 +1471,6 @@ type AutomationEditRequest = {
 }
 const sidebarThreadTreeRef = ref<SidebarThreadTreeExposed | null>(null)
 const automationsPanelRef = ref<AutomationsPanelExposed | null>(null)
-const {
-  buildFeedbackMailto,
-  feedbackMailtoBase,
-  recordVisibleFailure,
-} = useFeedbackDiagnostics()
-const feedbackMailto = feedbackMailtoBase()
-
-function prepareFeedbackLink(event: MouseEvent, message?: string): void {
-  if (message) {
-    recordVisibleFailure(message)
-  }
-  const target = event.currentTarget
-  if (target instanceof HTMLAnchorElement) {
-    target.href = buildFeedbackMailto()
-  }
-}
 const homeThreadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadComposerRef = ref<ThreadComposerExposed | null>(null)
 const threadConversationRef = ref<{ jumpToLatest: () => void } | null>(null)
@@ -1689,19 +1656,6 @@ const isExistingFolderLoading = ref(false)
 const isOpeningExistingFolder = ref(false)
 const showHiddenFolders = ref(false)
 const existingFolderFilter = ref('')
-const visibleFeedbackErrors = [
-  desktopError,
-  codexCliMissingError,
-  threadBranchError,
-  threadBranchCommitsError,
-  accountActionError,
-  providerError,
-  telegramConfigError,
-  createFolderError,
-  projectSetupError,
-  existingFolderError,
-]
-const hasVisibleFeedbackError = computed(() => visibleFeedbackErrors.some((entry) => entry.value.trim().length > 0))
 const telegramStatus = ref<TelegramStatus>({
   configured: false,
   active: false,
@@ -2144,16 +2098,6 @@ onMounted(() => {
   void loadFreeModeStatus()
   void refreshThreadTerminalStatus()
   void refreshTerminalQuickCommands()
-})
-
-watch(visibleFeedbackErrors, (values, oldValues) => {
-  values.forEach((value, index) => {
-    if (value === oldValues[index]) return
-    const message = value.trim()
-    if (message) {
-      recordVisibleFailure(message)
-    }
-  })
 })
 
 onUnmounted(() => {
@@ -5148,14 +5092,6 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .composer-runtime-error {
   @apply flex w-full items-start justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800 shadow-sm;
-}
-
-.visible-error-with-feedback {
-  @apply flex items-start justify-between gap-3;
-}
-
-.visible-error-feedback {
-  @apply shrink-0 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300;
 }
 
 .content-thread-terminal-panel {

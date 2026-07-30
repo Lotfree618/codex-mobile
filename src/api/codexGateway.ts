@@ -11,8 +11,6 @@ import type {
   CollaborationModeListResponse,
   ConfigReadResponse,
   GetAccountRateLimitsResponse,
-  ModelListResponse,
-  ReasoningEffort,
   ThreadForkResponse,
   ThreadListResponse,
   ThreadReadResponse,
@@ -53,6 +51,7 @@ import type {
   UiReviewWorkspaceView,
   UiRateLimitSnapshot,
   UiRateLimitWindow,
+  ReasoningEffort,
   UiThreadAutomation,
   UiThreadAutomationStatus,
 } from '../types/codex'
@@ -63,6 +62,25 @@ type CurrentModelConfig = {
   providerId: string
   reasoningEffort: ReasoningEffort | ''
   speedMode: SpeedMode
+}
+
+export type ModelReasoningCapability = {
+  efforts: ReasoningEffort[]
+  defaultEffort: ReasoningEffort | ''
+}
+
+export type AvailableModelCatalog = {
+  ids: string[]
+  reasoningCapabilitiesByModelId: Record<string, ModelReasoningCapability>
+}
+
+type ModelCatalogPayload = {
+  data: Array<{
+    id?: unknown
+    model?: unknown
+    supportedReasoningEfforts?: Array<{ reasoningEffort?: unknown }>
+    defaultReasoningEffort?: unknown
+  }>
 }
 
 export type DirectoryPluginSummary = {
@@ -701,7 +719,7 @@ async function enrichThreadMessagesWithFallback(threadId: string, messages: UiMe
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
-  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''
@@ -2037,31 +2055,60 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
   return null
 }
 
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+function readModelReasoningCapability(row: ModelCatalogPayload['data'][number]): ModelReasoningCapability | null {
+  const efforts = (row.supportedReasoningEfforts ?? [])
+    .map((option) => normalizeReasoningEffort(option.reasoningEffort))
+    .filter((effort, index, values): effort is ReasoningEffort => effort.length > 0 && values.indexOf(effort) === index)
+  if (efforts.length === 0) return null
+
+  const defaultEffort = normalizeReasoningEffort(row.defaultReasoningEffort)
+  return {
+    efforts,
+    defaultEffort: defaultEffort && efforts.includes(defaultEffort) ? defaultEffort : '',
+  }
+}
+
+export async function getAvailableModelCatalog(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<AvailableModelCatalog> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
   const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
 
   if (providerModels?.exclusive || options.requireProviderModels) {
-    return providerModels?.ids ?? []
+    return {
+      ids: providerModels?.ids ?? [],
+      reasoningCapabilitiesByModelId: {},
+    }
   }
 
-  const payload = await callRpc<ModelListResponse>('model/list', {})
+  const payload = await callRpc<ModelCatalogPayload>('model/list', {})
   const ids: string[] = []
+  const reasoningCapabilitiesByModelId: Record<string, ModelReasoningCapability> = {}
   for (const row of payload.data) {
-    const candidate = row.id || row.model
+    const candidate = typeof row.id === 'string'
+      ? row.id.trim()
+      : typeof row.model === 'string'
+        ? row.model.trim()
+        : ''
     if (!candidate || ids.includes(candidate)) continue
     ids.push(candidate)
+    const capability = readModelReasoningCapability(row)
+    if (capability) reasoningCapabilitiesByModelId[candidate] = capability
   }
   if (ids.length === 0 && !providerModels?.exclusive && !options.requireProviderModels) {
     ids.push(...DEFAULT_CODEX_MODEL_IDS)
   }
 
-  if (!shouldIncludeProviderModels || !providerModels) return ids
+  if (!shouldIncludeProviderModels || !providerModels) {
+    return { ids, reasoningCapabilitiesByModelId }
+  }
 
   for (const candidate of providerModels.ids) {
     if (!ids.includes(candidate)) ids.push(candidate)
   }
-  return ids
+  return { ids, reasoningCapabilitiesByModelId }
+}
+
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+  return (await getAvailableModelCatalog(options)).ids
 }
 
 export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {

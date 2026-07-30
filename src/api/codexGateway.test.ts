@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAvailableModelCatalog, getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -203,6 +203,44 @@ describe('getAvailableModelIds', () => {
       includeProviderModels: true,
     })).resolves.toEqual(['gpt-5.5', 'gpt-5.4-mini'])
     expect(requests).toEqual(['/codex-api/provider-models', '/codex-api/rpc'])
+  })
+
+  it('preserves model-provided Max and Ultra reasoning capabilities', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string }
+        : { method: '' }
+      expect(body.method).toBe('model/list')
+      return new Response(JSON.stringify({
+        result: {
+          data: [{
+            id: 'gpt-5.6-terra',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low' },
+              { reasoningEffort: 'medium' },
+              { reasoningEffort: 'high' },
+              { reasoningEffort: 'xhigh' },
+              { reasoningEffort: 'max' },
+              { reasoningEffort: 'ultra' },
+            ],
+            defaultReasoningEffort: 'medium',
+          }],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(getAvailableModelCatalog({ includeProviderModels: false })).resolves.toEqual({
+      ids: ['gpt-5.6-terra'],
+      reasoningCapabilitiesByModelId: {
+        'gpt-5.6-terra': {
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultEffort: 'medium',
+        },
+      },
+    })
   })
 })
 
