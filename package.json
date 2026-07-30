@@ -26,6 +26,7 @@
   "engines": {
     "node": ">=18"
   },
+  "packageManager": "pnpm@10.34.4",
   "bin": {
     "codexapp": "dist-cli/index.js",
     "codexui": "dist-cli/index.js"
