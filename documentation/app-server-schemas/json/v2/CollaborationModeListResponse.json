@@ -1,15 +1,27 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CollaborationModeListResponse",
+  "description": "EXPERIMENTAL - collaboration mode presets response.",
+  "type": "object",
+  "required": [
+    "data"
+  ],
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/CollaborationModeMask"
+      }
+    }
+  },
   "definitions": {
     "CollaborationModeMask": {
-      "description": "A mask for collaboration mode settings, allowing partial updates. All fields except `name` are optional, enabling selective updates.",
+      "description": "EXPERIMENTAL - collaboration mode preset metadata for clients.",
+      "type": "object",
+      "required": [
+        "name"
+      ],
       "properties": {
-        "developer_instructions": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "mode": {
           "anyOf": [
             {
@@ -46,45 +58,20 @@
             }
           ]
         }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
+      }
     },
     "ModeKind": {
       "description": "Initial collaboration mode to use when the TUI starts.",
+      "type": "string",
       "enum": [
         "plan",
         "default"
-      ],
-      "type": "string"
+      ]
     },
     "ReasoningEffort": {
-      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
-      "enum": [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ],
-      "type": "string"
+      "description": "A non-empty reasoning effort value advertised by the model.",
+      "type": "string",
+      "minLength": 1
     }
-  },
-  "description": "EXPERIMENTAL - collaboration mode presets response.",
-  "properties": {
-    "data": {
-      "items": {
-        "$ref": "#/definitions/CollaborationModeMask"
-      },
-      "type": "array"
-    }
-  },
-  "required": [
-    "data"
-  ],
-  "title": "CollaborationModeListResponse",
-  "type": "object"
+  }
 }

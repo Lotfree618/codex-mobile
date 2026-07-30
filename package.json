@@ -53,6 +53,8 @@
     "build:cli": "tsup",
     "build": "pnpm run build:frontend && pnpm run build:cli",
     "postinstall": "node scripts/fix-pty-native-build.cjs",
+    "schema:sync": "node scripts/sync-app-server-schemas.mjs",
+    "schema:check": "node scripts/sync-app-server-schemas.mjs --check",
     "test:unit": "vitest run",
     "preview": "vite preview",
     "prepublishOnly": "pnpm run build",
