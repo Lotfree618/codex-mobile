@@ -12,7 +12,7 @@
 
 #### Expected Results
 - Switching away from an idle thread calls `thread/unsubscribe` for the previous thread.
-- The idle previous thread is eventually absent from `thread/loaded/list` after the app-server grace period.
+- The client immediately verifies `thread/loaded/list`; a still-loaded thread is treated as an unsubscribe failure.
 - Threads with an active turn or pending request remain subscribed until they are safe to release.
 
 #### Rollback/Cleanup

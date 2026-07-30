@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelCatalog, getAvailableModelIds, getOlderThreadMessages, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn, steerThreadTurn } from './codexGateway'
+import { getAvailableModelCatalog, getAvailableModelIds, getOlderThreadMessages, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn, steerThreadTurn, unsubscribeThread } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -77,6 +77,49 @@ describe('steerThreadTurn', () => {
         input: [{ type: 'text', text: 'focus on tests' }],
       },
     }])
+  })
+})
+
+describe('unsubscribeThread', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('verifies the thread is absent from thread/loaded/list', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> }
+      requests.push(body)
+      const result = body.method === 'thread/unsubscribe'
+        ? { status: 'unsubscribed' }
+        : { data: ['thread-other'], nextCursor: null }
+      return new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(unsubscribeThread('thread-1')).resolves.toBeUndefined()
+
+    expect(requests).toEqual([
+      { method: 'thread/unsubscribe', params: { threadId: 'thread-1' } },
+      { method: 'thread/loaded/list', params: { cursor: null, limit: 100 } },
+    ])
+  })
+
+  it('fails when app-server still reports the thread as loaded', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string }
+      const result = body.method === 'thread/unsubscribe'
+        ? { status: 'unsubscribed' }
+        : { data: ['thread-1'], nextCursor: null }
+      return new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(unsubscribeThread('thread-1')).rejects.toThrow('left thread thread-1 loaded')
   })
 })
 

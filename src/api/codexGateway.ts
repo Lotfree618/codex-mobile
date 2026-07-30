@@ -13,6 +13,7 @@ import type {
   GetAccountRateLimitsResponse,
   ThreadForkResponse,
   ThreadListResponse,
+  ThreadLoadedListResponse,
   ThreadReadResponse,
   ThreadResumeResponse,
   ThreadTurnsListResponse,
@@ -1612,6 +1613,17 @@ export async function unsubscribeThread(threadId: string): Promise<void> {
   const normalizedThreadId = threadId.trim()
   if (!normalizedThreadId) return
   await callRpc('thread/unsubscribe', { threadId: normalizedThreadId })
+  let cursor: string | null = null
+  do {
+    const loaded: ThreadLoadedListResponse = await callRpc<ThreadLoadedListResponse>('thread/loaded/list', {
+      cursor,
+      limit: 100,
+    })
+    if (loaded.data.includes(normalizedThreadId)) {
+      throw new Error(`thread/unsubscribe left thread ${normalizedThreadId} loaded`)
+    }
+    cursor = loaded.nextCursor
+  } while (cursor)
 }
 
 export async function archiveThread(threadId: string): Promise<void> {
