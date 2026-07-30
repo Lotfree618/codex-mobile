@@ -19,7 +19,7 @@ Thread conversation incremental older-turn loading.
 
 #### Expected Results
 - Initial thread open remains bounded to the latest turn page.
-- Load earlier messages fetches older persisted turns from the local bridge instead of only revealing already-loaded messages.
+- Load earlier messages calls the official `thread/turns/list` cursor API instead of re-reading full thread history.
 - The control remains available while older persisted turns exist and disappears after the first turn is loaded.
 - Message ordering, turn actions, and scroll restoration remain stable in light and dark themes.
 

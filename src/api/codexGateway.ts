@@ -13,8 +13,11 @@ import type {
   GetAccountRateLimitsResponse,
   ThreadForkResponse,
   ThreadListResponse,
+  ThreadLoadedListResponse,
   ThreadReadResponse,
   ThreadResumeResponse,
+  ThreadUnsubscribeResponse,
+  ThreadTurnsListResponse,
   ThreadStartResponse,
   Turn,
 } from './appServerDtos'
@@ -41,10 +44,8 @@ import type {
   UiReviewAction,
   UiReviewActionLevel,
   UiReviewFile,
-  UiReviewFinding,
   UiReviewHunk,
   UiReviewLine,
-  UiReviewResult,
   UiReviewScope,
   UiReviewSnapshot,
   UiReviewSummary,
@@ -746,6 +747,45 @@ export type ThreadTurnPage = {
   hasMoreOlder: boolean
   startTurnIndex: number
   turnIndexByTurnId: ThreadTurnIndexById
+  nextCursor: string | null
+}
+
+const THREAD_TURN_PAGE_LIMIT = 10
+const threadTurnCursorByFirstTurnId = new Map<string, string>()
+const threadTurnStartIndexByFirstTurnId = new Map<string, number>()
+
+function buildThreadTurnsPayload(threadId: string, turns: ThreadTurnsListResponse['data']): ThreadReadResponse {
+  return {
+    thread: {
+      id: threadId,
+      turns,
+    },
+  } as ThreadReadResponse
+}
+
+function normalizeThreadTurnsPage(
+  threadId: string,
+  payload: ThreadTurnsListResponse,
+  startTurnIndex: number,
+): ThreadTurnPage {
+  const turns = [...payload.data].reverse()
+  const threadPayload = buildThreadTurnsPayload(threadId, turns)
+  const firstTurnId = turns[0]?.id?.trim() ?? ''
+  if (firstTurnId && payload.nextCursor) {
+    threadTurnCursorByFirstTurnId.set(`${threadId}:${firstTurnId}`, payload.nextCursor)
+  }
+  if (firstTurnId) {
+    threadTurnStartIndexByFirstTurnId.set(`${threadId}:${firstTurnId}`, startTurnIndex)
+  }
+  return {
+    messages: normalizeThreadMessagesV2(threadPayload, startTurnIndex),
+    inProgress: readThreadInProgressFromResponse(threadPayload),
+    activeTurnId: readActiveTurnIdFromResponse(threadPayload),
+    hasMoreOlder: Boolean(payload.nextCursor),
+    startTurnIndex,
+    turnIndexByTurnId: buildTurnIndexByTurnId(threadPayload, startTurnIndex),
+    nextCursor: payload.nextCursor,
+  }
 }
 
 async function getThreadGroupsPageV2(cursor: string | null, limit: number): Promise<ThreadGroupsPage> {
@@ -762,14 +802,6 @@ async function getThreadGroupsPageV2(cursor: string | null, limit: number): Prom
       ? payload.nextCursor
       : null,
   }
-}
-
-async function getThreadMessagesV2(threadId: string): Promise<UiMessage[]> {
-  const payload = await callRpc<ThreadReadResponse>('thread/read', {
-    threadId,
-    includeTurns: true,
-  })
-  return normalizeThreadMessagesV2(payload, readThreadTurnStartIndex(payload))
 }
 
 async function getThreadSummaryV2(threadId: string): Promise<UiThread> {
@@ -789,51 +821,41 @@ async function getThreadDetailV2(threadId: string): Promise<{
   hasMoreOlder: boolean
   turnIndexByTurnId: ThreadTurnIndexById
 }> {
-  const payload = await callRpc<ThreadReadResponse>('thread/read', {
-    threadId,
-    includeTurns: true,
-  })
-  const startTurnIndex = readThreadTurnStartIndex(payload)
-  const normalized = normalizeThreadMessagesV2(payload, startTurnIndex)
+  const [payload, turnsPage] = await Promise.all([
+    callRpc<ThreadReadResponse>('thread/read', { threadId, includeTurns: false }),
+    callRpc<ThreadTurnsListResponse>('thread/turns/list', {
+      threadId,
+      limit: THREAD_TURN_PAGE_LIMIT,
+      sortDirection: 'desc',
+      itemsView: 'full',
+    }),
+  ])
+  const normalizedPage = normalizeThreadTurnsPage(threadId, turnsPage, -turnsPage.data.length)
   return {
     model: normalizeThreadModelFromPayload(payload),
     modelProvider: normalizeThreadModelProviderFromPayload(payload),
-    messages: normalized,
-    inProgress: readThreadInProgressFromResponse(payload),
-    activeTurnId: readActiveTurnIdFromResponse(payload),
-    hasMoreOlder: startTurnIndex > 0,
-    turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
+    messages: normalizedPage.messages,
+    inProgress: readThreadInProgressFromResponse(payload) || normalizedPage.inProgress,
+    activeTurnId: normalizedPage.activeTurnId,
+    hasMoreOlder: normalizedPage.hasMoreOlder,
+    turnIndexByTurnId: normalizedPage.turnIndexByTurnId,
   }
 }
 
 async function getOlderThreadMessagesV2(threadId: string, beforeTurnId: string, limit = 10): Promise<ThreadTurnPage> {
-  const params = new URLSearchParams({
+  const cursor = threadTurnCursorByFirstTurnId.get(`${threadId}:${beforeTurnId}`)
+  if (!cursor) {
+    throw new Error(`Missing turn pagination cursor before ${beforeTurnId}`)
+  }
+  const payload = await callRpc<ThreadTurnsListResponse>('thread/turns/list', {
     threadId,
-    beforeTurnId,
-    limit: String(limit),
+    cursor,
+    limit,
+    sortDirection: 'desc',
+    itemsView: 'full',
   })
-  const response = await fetch(`/codex-api/thread-turn-page?${params.toString()}`)
-  if (!response.ok) {
-    throw new Error(`Older thread page request failed with ${response.status}`)
-  }
-  const payload = await response.json() as {
-    result?: ThreadReadResponse
-    hasMoreOlder?: unknown
-    startTurnIndex?: unknown
-  }
-  if (!payload.result) {
-    throw new Error('Older thread page response did not include a thread result')
-  }
-  const startTurnIndex = Math.max(0, Math.floor(typeof payload.startTurnIndex === 'number' ? payload.startTurnIndex : 0))
-
-  return {
-    messages: normalizeThreadMessagesV2(payload.result, startTurnIndex),
-    inProgress: readThreadInProgressFromResponse(payload.result),
-    activeTurnId: readActiveTurnIdFromResponse(payload.result),
-    hasMoreOlder: payload.hasMoreOlder === true,
-    startTurnIndex,
-    turnIndexByTurnId: buildTurnIndexByTurnId(payload.result, startTurnIndex),
-  }
+  const nextStartTurnIndex = (threadTurnStartIndexByFirstTurnId.get(`${threadId}:${beforeTurnId}`) ?? 0) - payload.data.length
+  return normalizeThreadTurnsPage(threadId, payload, nextStartTurnIndex)
 }
 
 export async function getThreadGroups(): Promise<UiProjectGroup[]> {
@@ -857,14 +879,6 @@ export async function getThreadGroupsPage(
 
 export function getBackgroundThreadListLimit(): number {
   return BACKGROUND_THREAD_LIST_LIMIT
-}
-
-export async function getThreadMessages(threadId: string): Promise<UiMessage[]> {
-  try {
-    return await getThreadMessagesV2(threadId)
-  } catch (error) {
-    throw normalizeCodexApiError(error, `Failed to load thread ${threadId}`, 'thread/read')
-  }
 }
 
 export async function getThreadSummary(threadId: string): Promise<UiThread> {
@@ -1022,107 +1036,6 @@ function normalizeReviewSummary(payload: unknown): UiReviewSummary {
     fileCount: readNumber(data?.fileCount) ?? 0,
     addedLineCount: readNumber(data?.addedLineCount) ?? 0,
     removedLineCount: readNumber(data?.removedLineCount) ?? 0,
-  }
-}
-
-function parseReviewLocation(value: string): {
-  absolutePath: string | null
-  startLine: number | null
-  endLine: number | null
-} {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return { absolutePath: null, startLine: null, endLine: null }
-  }
-
-  const match = trimmed.match(/^(.*?):(\d+)-(\d+)$/u)
-  if (!match) {
-    return { absolutePath: trimmed || null, startLine: null, endLine: null }
-  }
-
-  return {
-    absolutePath: match[1]?.trim() || null,
-    startLine: Number(match[2]),
-    endLine: Number(match[3]),
-  }
-}
-
-function parseReviewText(reviewText: string): UiReviewResult {
-  const normalized = reviewText.replace(/\r\n/g, '\n').trim()
-  if (!normalized) {
-    return { reviewText: '', summary: '', findings: [] }
-  }
-
-  const markerIndex = normalized.search(/\n(?:Full review comments|Review comment):\n/iu)
-  const summary = markerIndex >= 0 ? normalized.slice(0, markerIndex).trim() : normalized
-  const findingsSection = markerIndex >= 0 ? normalized.slice(markerIndex).trim() : ''
-  const findings: UiReviewFinding[] = []
-
-  if (findingsSection) {
-    const body = findingsSection
-      .replace(/^(?:Full review comments|Review comment):\n*/iu, '')
-      .trim()
-    const matches = body.matchAll(/^- (.+?) — (.+)\n?((?:  .*(?:\n|$))*)/gmu)
-    let index = 0
-    for (const match of matches) {
-      const title = match[1]?.trim() ?? ''
-      const location = parseReviewLocation(match[2] ?? '')
-      const block = (match[0] ?? '').trim()
-      const findingBody = (match[3] ?? '')
-        .split('\n')
-        .map((line) => line.replace(/^  /u, ''))
-        .join('\n')
-        .trim()
-
-      findings.push({
-        id: `finding:${index}`,
-        title: title || `Finding ${index + 1}`,
-        body: findingBody,
-        path: location.absolutePath ? location.absolutePath.split('/').filter(Boolean).slice(-1)[0] ?? location.absolutePath : null,
-        absolutePath: location.absolutePath,
-        startLine: location.startLine,
-        endLine: location.endLine,
-        rawText: block,
-      })
-      index += 1
-    }
-  }
-
-  return {
-    reviewText: normalized,
-    summary,
-    findings,
-  }
-}
-
-function readLatestReviewItem(payload: ThreadReadResponse, type: 'enteredReviewMode' | 'exitedReviewMode'): string | null {
-  const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
-  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
-    const turn = turns[turnIndex]
-    const items = Array.isArray(turn?.items) ? turn.items : []
-    for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = items[itemIndex]
-      if (item?.type !== type) continue
-      const review = typeof item.review === 'string' ? item.review.trim() : ''
-      if (review) return review
-    }
-  }
-  return null
-}
-
-export async function getThreadReviewResult(threadId: string): Promise<{
-  enteredReviewLabel: string | null
-  result: UiReviewResult | null
-}> {
-  const payload = await callRpc<ThreadReadResponse>('thread/read', {
-    threadId,
-    includeTurns: true,
-  })
-
-  const exitedReview = readLatestReviewItem(payload, 'exitedReviewMode')
-  return {
-    enteredReviewLabel: readLatestReviewItem(payload, 'enteredReviewMode'),
-    result: exitedReview ? parseReviewText(exitedReview) : null,
   }
 }
 
@@ -1392,7 +1305,7 @@ export async function getThreadTerminalSnapshot(threadId: string): Promise<Threa
 }
 
 export async function replyToServerRequest(
-  id: number,
+  id: string | number,
   payload: { result?: unknown; error?: { code?: number; message: string } },
 ): Promise<void> {
   await respondServerRequest({
@@ -1534,17 +1447,30 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
   if (existing) return existing
 
   const promise = (async () => {
-    const payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
-    const startTurnIndex = readThreadTurnStartIndex(payload)
-    const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
+    const payload = await callRpc<ThreadResumeResponse>('thread/resume', {
+      threadId,
+      excludeTurns: true,
+      initialTurnsPage: {
+        limit: THREAD_TURN_PAGE_LIMIT,
+        sortDirection: 'desc',
+        itemsView: 'full',
+      },
+    })
+    const turnsPageRecord = asRecord(payload.initialTurnsPage)
+    const turnsPage: ThreadTurnsListResponse = {
+      data: Array.isArray(turnsPageRecord?.data) ? turnsPageRecord.data as ThreadTurnsListResponse['data'] : [],
+      nextCursor: readString(turnsPageRecord?.nextCursor),
+      backwardsCursor: readString(turnsPageRecord?.backwardsCursor),
+    }
+    const normalizedPage = normalizeThreadTurnsPage(threadId, turnsPage, -turnsPage.data.length)
     return {
       model: normalizeThreadModelFromPayload(payload),
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
-      messages,
-      inProgress: readThreadInProgressFromResponse(payload),
-      activeTurnId: readActiveTurnIdFromResponse(payload),
-      hasMoreOlder: startTurnIndex > 0,
-      turnIndexByTurnId: buildTurnIndexByTurnId(payload, startTurnIndex),
+      messages: normalizedPage.messages,
+      inProgress: readThreadInProgressFromResponse(payload) || normalizedPage.inProgress,
+      activeTurnId: normalizedPage.activeTurnId,
+      hasMoreOlder: normalizedPage.hasMoreOlder,
+      turnIndexByTurnId: normalizedPage.turnIndexByTurnId,
     }
   })()
 
@@ -1563,6 +1489,27 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
     }, 2000)
   }).catch(() => undefined)
   return promise
+}
+
+export async function unsubscribeThread(threadId: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+  const response = await callRpc<ThreadUnsubscribeResponse>('thread/unsubscribe', {
+    threadId: normalizedThreadId,
+  })
+  if (response.status !== 'notLoaded') return
+
+  let cursor: string | null = null
+  do {
+    const loaded: ThreadLoadedListResponse = await callRpc<ThreadLoadedListResponse>('thread/loaded/list', {
+      cursor,
+      limit: 100,
+    })
+    if (loaded.data.includes(normalizedThreadId)) {
+      throw new Error(`thread/unsubscribe reported ${normalizedThreadId} not loaded, but thread/loaded/list still includes it`)
+    }
+    cursor = loaded.nextCursor
+  } while (cursor)
 }
 
 export async function archiveThread(threadId: string): Promise<void> {
@@ -1893,7 +1840,6 @@ export async function startThreadTurn(
       input.push({
         type: 'image',
         url: normalizedUrl,
-        image_url: normalizedUrl,
       })
     }
     if (skills) {
@@ -1901,12 +1847,10 @@ export async function startThreadTurn(
         input.push({ type: 'skill', name: skill.name, path: skill.path })
       }
     }
-    const attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
     const params: Record<string, unknown> = {
       threadId,
       input,
     }
-    if (attachments.length > 0) params.attachments = attachments
     if (normalizedModel) {
       params.model = normalizedModel
     }
@@ -1928,6 +1872,65 @@ export async function startThreadTurn(
     return typeof payload?.turn?.id === 'string' ? payload.turn.id.trim() : ''
   } catch (error) {
     throw normalizeCodexApiError(error, `Failed to start turn for thread ${threadId}`, 'turn/start')
+  }
+}
+
+export async function steerThreadTurn(
+  threadId: string,
+  expectedTurnId: string,
+  text: string,
+  imageUrls: string[] = [],
+  skills: Array<{ name: string; path: string }> = [],
+  fileAttachments: FileAttachmentParam[] = [],
+): Promise<string> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedTurnId = expectedTurnId.trim()
+  if (!normalizedThreadId || !normalizedTurnId) {
+    throw new Error('turn/steer requires threadId and expectedTurnId')
+  }
+
+  const localImageAttachments: FileAttachmentParam[] = []
+  for (const imageUrl of imageUrls) {
+    const localImagePath = extractLocalImagePathFromUrl(imageUrl.trim())
+    if (!localImagePath) continue
+    localImageAttachments.push({
+      label: fileNameFromPath(localImagePath),
+      path: localImagePath,
+      fsPath: localImagePath,
+    })
+  }
+  const allFileAttachments = [...fileAttachments, ...localImageAttachments]
+  const dedupedFileAttachments = allFileAttachments.filter((entry, index) =>
+    allFileAttachments.findIndex((candidate) => candidate.fsPath === entry.fsPath) === index)
+  const input: Array<Record<string, unknown>> = [{
+    type: 'text',
+    text: buildTextWithAttachments(text, dedupedFileAttachments),
+  }]
+  for (const imageUrl of imageUrls) {
+    const normalizedUrl = imageUrl.trim()
+    if (!normalizedUrl) continue
+    const localImagePath = extractLocalImagePathFromUrl(normalizedUrl)
+    input.push(localImagePath
+      ? { type: 'localImage', path: localImagePath }
+      : { type: 'image', url: normalizedUrl })
+  }
+  for (const skill of skills) {
+    input.push({ type: 'skill', name: skill.name, path: skill.path })
+  }
+
+  try {
+    const payload = await callRpc<{ turnId?: unknown }>('turn/steer', {
+      threadId: normalizedThreadId,
+      expectedTurnId: normalizedTurnId,
+      input,
+    })
+    const turnId = readString(asRecord(payload)?.turnId)?.trim() ?? ''
+    if (!turnId) {
+      throw new Error('turn/steer did not return a turn id')
+    }
+    return turnId
+  } catch (error) {
+    throw normalizeCodexApiError(error, `Failed to steer turn for thread ${normalizedThreadId}`, 'turn/steer')
   }
 }
 

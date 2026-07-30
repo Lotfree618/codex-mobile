@@ -1,0 +1,5 @@
+{
+  "package": "@openai/codex",
+  "version": "0.146.0",
+  "experimental": true
+}

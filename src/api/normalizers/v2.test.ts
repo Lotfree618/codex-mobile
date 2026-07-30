@@ -17,12 +17,16 @@ function threadReadResponseWithContent(content: ThreadReadResponse['thread']['tu
       gitInfo: null,
       turns: [{
         id: 'turn-1',
+        itemsView: 'full',
         status: 'completed',
         error: null,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
         items: content,
       }],
     },
-  }
+  } as ThreadReadResponse
 }
 
 describe('normalizeThreadMessagesV2', () => {
@@ -30,6 +34,7 @@ describe('normalizeThreadMessagesV2', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-1',
+      clientId: null,
       content: [
         { type: 'text', text: 'Use the browser skill', text_elements: [] },
         { type: 'skill', name: 'browser-use:browser', path: '/Users/igor/.codex/skills/browser/SKILL.md' },
@@ -75,6 +80,7 @@ describe('normalizeThreadMessagesV2', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-2',
+      clientId: null,
       content: [
         { type: 'skill', name: 'composio-cli', path: '/Users/igor/.codex/skills/composio-cli/SKILL.md' },
       ],
@@ -94,6 +100,7 @@ describe('normalizeThreadMessagesV2', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'automation-user-1',
+      clientId: null,
       content: [{
         type: 'text',
         text: `<heartbeat>
@@ -121,6 +128,7 @@ Reply with &lt;/instructions&gt; and A &amp; B
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-3',
+      clientId: null,
       content: [{ type: 'text', text: 'Paged message', text_elements: [] }],
     }]), 12)
 
@@ -136,6 +144,7 @@ Reply with &lt;/instructions&gt; and A &amp; B
     const response = threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-4',
+      clientId: null,
       content: [{ type: 'text', text: 'hi', text_elements: [] }],
     }])
     response.thread.turns[0].status = 'failed'
@@ -163,6 +172,7 @@ Reply with &lt;/instructions&gt; and A &amp; B
     response.thread.turns = [
       {
         id: '',
+        itemsView: 'full',
         status: 'failed',
         error: {
           message: 'first failed turn',
@@ -170,9 +180,13 @@ Reply with &lt;/instructions&gt; and A &amp; B
           additionalDetails: null,
         },
         items: [],
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
       },
       {
         id: '   ',
+        itemsView: 'full',
         status: 'failed',
         error: {
           message: 'second failed turn',
@@ -180,6 +194,9 @@ Reply with &lt;/instructions&gt; and A &amp; B
           additionalDetails: null,
         },
         items: [],
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
       },
     ]
 

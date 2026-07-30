@@ -57,7 +57,7 @@ type JsonRpcCall = {
 }
 
 type JsonRpcResponse = {
-  id?: number
+  id?: string | number
   result?: unknown
   error?: {
     code: number
@@ -98,10 +98,15 @@ export type WorkspaceRootsState = {
 }
 
 type PendingServerRequest = {
-  id: number
+  id: string | number
   method: string
   params: unknown
   receivedAtIso: string
+}
+
+function isServerRequestId(value: unknown): value is string | number {
+  return (typeof value === 'string' && value.length > 0) ||
+    (typeof value === 'number' && Number.isInteger(value))
 }
 
 type ChatgptAuthTokensRefreshParams = {
@@ -227,8 +232,6 @@ const COMPOSIO_CONNECTORS_PAGE_LIMIT_MAX = 1000
 
 const PROVIDER_MODELS_FETCH_TIMEOUT_MS = 5_000
 
-const THREAD_RESPONSE_TURN_LIMIT = 10
-const THREAD_TURN_PAGE_READ_CACHE_TTL_MS = 30_000
 const THREAD_METHODS_WITH_TURNS = new Set(['thread/read', 'thread/resume', 'thread/fork', 'thread/rollback'])
 const THREAD_METHODS_WITH_THREAD_SNAPSHOT = new Set([...THREAD_METHODS_WITH_TURNS, 'thread/start'])
 const THREAD_SEARCH_FULL_TEXT_THREAD_LIMIT = 100
@@ -998,25 +1001,6 @@ export async function sanitizeThreadTurnsInlinePayloads(method: string, result: 
     thread: {
       ...thread,
       turns: nextTurns,
-    },
-  }
-}
-
-function trimThreadTurnsInRpcResult(method: string, result: unknown): unknown {
-  if (!THREAD_METHODS_WITH_TURNS.has(method)) return result
-
-  const record = asRecord(result)
-  const thread = asRecord(record?.thread)
-  const turns = Array.isArray(thread?.turns) ? thread.turns : null
-  if (!record || !thread || !turns || turns.length <= THREAD_RESPONSE_TURN_LIMIT) return result
-  const startTurnIndex = Math.max(0, turns.length - THREAD_RESPONSE_TURN_LIMIT)
-
-  return {
-    ...record,
-    threadTurnStartIndex: startTurnIndex,
-    thread: {
-      ...thread,
-      turns: turns.slice(startTurnIndex),
     },
   }
 }
@@ -6482,7 +6466,7 @@ const MERGEABLE_ITEM_TYPES = new Set([
   'fileChange',
 ])
 
-class AppServerProcess {
+export class AppServerProcess {
   private process: ChildProcessWithoutNullStreams | null = null
   private initialized = false
   private initializePromise: Promise<void> | null = null
@@ -6491,11 +6475,9 @@ class AppServerProcess {
   private stopping = false
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
-  private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
+  private readonly pendingServerRequests = new Map<string | number, PendingServerRequest>()
   private readonly streamEventsByThreadId = new Map<string, StreamEventFrame[]>()
   private readonly lastThreadReadSnapshotByThreadId = new Map<string, unknown>()
-  private readonly threadTurnPageReadCacheByThreadId = new Map<string, { result: unknown; expiresAt: number }>()
-  private readonly threadTurnPageReadPromiseByThreadId = new Map<string, Promise<unknown>>()
   private readonly capturedItemsByThreadId = new Map<string, Map<string, CapturedItem>>()
   private readonly liveStateCache = new Map<string, { data: unknown; turnCount: number; sessionSize: number }>()
   private chatgptAuthRefreshPromise: Promise<ChatgptAuthTokensRefreshResponse> | null = null
@@ -6615,7 +6597,7 @@ class AppServerProcess {
       return
     }
 
-    if (typeof message.id === 'number' && this.pending.has(message.id)) {
+    if (message.method === undefined && typeof message.id === 'number' && this.pending.has(message.id)) {
       const pendingRequest = this.pending.get(message.id)
       this.pending.delete(message.id)
 
@@ -6629,7 +6611,13 @@ class AppServerProcess {
       return
     }
 
-    if (typeof message.method === 'string' && typeof message.id !== 'number') {
+    if (typeof message.method === 'string' && message.id === undefined) {
+      if (message.method === 'serverRequest/resolved') {
+        this.clearResolvedServerRequest(message.params)
+      }
+      if (message.method === 'turn/completed') {
+        this.clearThreadServerRequests(message.params)
+      }
       this.emitNotification({
         method: message.method,
         params: message.params ?? null,
@@ -6638,8 +6626,26 @@ class AppServerProcess {
     }
 
     // Handle server-initiated JSON-RPC requests (approvals, dynamic tool calls, etc.).
-    if (typeof message.id === 'number' && typeof message.method === 'string') {
+    if (isServerRequestId(message.id) && typeof message.method === 'string') {
       this.handleServerRequest(message.id, message.method, message.params ?? null)
+    }
+  }
+
+  private clearResolvedServerRequest(params: unknown): void {
+    const record = asRecord(params)
+    const requestId = record?.requestId ?? record?.id
+    if (!isServerRequestId(requestId)) return
+    this.pendingServerRequests.delete(requestId)
+  }
+
+  private clearThreadServerRequests(params: unknown): void {
+    const threadId = this.extractThreadIdFromParams(params)
+    if (!threadId) return
+    for (const [requestId, request] of this.pendingServerRequests) {
+      const requestParams = asRecord(request.params)
+      if (readNonEmptyString(requestParams?.threadId ?? requestParams?.thread_id) === threadId) {
+        this.pendingServerRequests.delete(requestId)
+      }
     }
   }
 
@@ -6649,7 +6655,6 @@ class AppServerProcess {
     const nThreadId = this.extractThreadIdFromParams(notification.params)
     if (nThreadId) {
       this.invalidateLiveStateCache(nThreadId)
-      this.threadTurnPageReadCacheByThreadId.delete(nThreadId)
     }
     for (const listener of this.notificationListeners) {
       listener(notification)
@@ -6704,37 +6709,10 @@ class AppServerProcess {
 
   storeThreadReadSnapshot(threadId: string, snapshot: unknown): void {
     this.lastThreadReadSnapshotByThreadId.set(threadId, snapshot)
-    this.threadTurnPageReadCacheByThreadId.delete(threadId)
   }
 
   getLastThreadReadSnapshot(threadId: string): unknown | null {
     return this.lastThreadReadSnapshotByThreadId.get(threadId) ?? null
-  }
-
-  async readThreadForTurnPage(threadId: string): Promise<unknown> {
-    const now = Date.now()
-    const cached = this.threadTurnPageReadCacheByThreadId.get(threadId)
-    if (cached && cached.expiresAt > now) return cached.result
-    if (cached) this.threadTurnPageReadCacheByThreadId.delete(threadId)
-
-    const pending = this.threadTurnPageReadPromiseByThreadId.get(threadId)
-    if (pending) return pending
-
-    const promise = this.rpc('thread/read', {
-      threadId,
-      includeTurns: true,
-    }).then((result) => {
-      this.threadTurnPageReadCacheByThreadId.set(threadId, {
-        result,
-        expiresAt: Date.now() + THREAD_TURN_PAGE_READ_CACHE_TTL_MS,
-      })
-      return result
-    }).finally(() => {
-      this.threadTurnPageReadPromiseByThreadId.delete(threadId)
-    })
-
-    this.threadTurnPageReadPromiseByThreadId.set(threadId, promise)
-    return promise
   }
 
   cacheLiveState(threadId: string, data: unknown, turnCount: number, sessionSize: number): void {
@@ -6832,7 +6810,7 @@ class AppServerProcess {
     })
   }
 
-  private sendServerRequestReply(requestId: number, reply: ServerRequestReply): void {
+  private sendServerRequestReply(requestId: string | number, reply: ServerRequestReply): void {
     if (reply.error) {
       this.sendLine({
         jsonrpc: '2.0',
@@ -6849,7 +6827,7 @@ class AppServerProcess {
     })
   }
 
-  private resolvePendingServerRequest(requestId: number, reply: ServerRequestReply): void {
+  private resolvePendingServerRequest(requestId: string | number, reply: ServerRequestReply): void {
     const pendingRequest = this.pendingServerRequests.get(requestId)
     if (!pendingRequest) {
       throw new Error(`No pending server request found for id ${String(requestId)}`)
@@ -6857,21 +6835,6 @@ class AppServerProcess {
     this.pendingServerRequests.delete(requestId)
 
     this.sendServerRequestReply(requestId, reply)
-    const requestParams = asRecord(pendingRequest.params)
-    const threadId =
-      typeof requestParams?.threadId === 'string' && requestParams.threadId.length > 0
-        ? requestParams.threadId
-        : ''
-    this.emitNotification({
-      method: 'server/request/resolved',
-      params: {
-        id: requestId,
-        method: pendingRequest.method,
-        threadId,
-        mode: 'manual',
-        resolvedAtIso: new Date().toISOString(),
-      },
-    })
   }
 
   private async refreshChatgptAuthTokens(params: ChatgptAuthTokensRefreshParams): Promise<ChatgptAuthTokensRefreshResponse> {
@@ -6883,7 +6846,7 @@ class AppServerProcess {
     return await this.chatgptAuthRefreshPromise
   }
 
-  private async handleChatgptAuthTokensRefreshRequest(requestId: number, params: unknown): Promise<void> {
+  private async handleChatgptAuthTokensRefreshRequest(requestId: string | number, params: unknown): Promise<void> {
     const requestParams = asRecord(params)
     const previousAccountId = readNonEmptyString(requestParams?.previousAccountId ?? requestParams?.previous_account_id)
     try {
@@ -6892,15 +6855,6 @@ class AppServerProcess {
         previousAccountId: previousAccountId || undefined,
       })
       this.sendServerRequestReply(requestId, { result })
-      this.emitNotification({
-        method: 'server/request/resolved',
-        params: {
-          id: requestId,
-          method: 'account/chatgptAuthTokens/refresh',
-          mode: 'automatic',
-          resolvedAtIso: new Date().toISOString(),
-        },
-      })
     } catch (error) {
       this.sendServerRequestReply(requestId, {
         error: {
@@ -6911,7 +6865,7 @@ class AppServerProcess {
     }
   }
 
-  private handleServerRequest(requestId: number, method: string, params: unknown): void {
+  private handleServerRequest(requestId: string | number, method: string, params: unknown): void {
     if (method === 'account/chatgptAuthTokens/refresh') {
       void this.handleChatgptAuthTokensRefreshRequest(requestId, params)
       return
@@ -6957,10 +6911,12 @@ class AppServerProcess {
     this.initializePromise = this.call('initialize', {
       clientInfo: {
         name: 'codex-web-local',
+        title: 'Codex Web Local',
         version: '0.1.0',
       },
       capabilities: {
         experimentalApi: true,
+        requestAttestation: false,
       },
     }).then(() => {
       this.sendLine({
@@ -6997,8 +6953,8 @@ class AppServerProcess {
     }
 
     const id = body.id
-    if (typeof id !== 'number' || !Number.isInteger(id)) {
-      throw new Error('Invalid response payload: "id" must be an integer')
+    if (!isServerRequestId(id)) {
+      throw new Error('Invalid response payload: "id" must be a string or integer')
     }
 
     const rawError = asRecord(body.error)
@@ -7163,16 +7119,13 @@ export class BackendQueueProcessor {
   }
 
   private async canStartQueuedTurn(threadId: string): Promise<boolean> {
-    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: true }))
+    const response = asRecord(await this.appServer.rpc('thread/read', { threadId, includeTurns: false }))
     const thread = asRecord(response?.thread)
     if (!thread) return false
 
     const status = asRecord(thread.status)
     const statusType = readNonEmptyString(status?.type)
-    if (statusType === 'inProgress' || statusType === 'running' || statusType === 'active') return false
-
-    const turns = Array.isArray(thread.turns) ? thread.turns : []
-    return !turns.some((turn) => readNonEmptyString(asRecord(turn)?.status) === 'inProgress')
+    return statusType === 'idle'
   }
 
   private async popNextQueuedTurn(threadId: string): Promise<BackendQueuedTurn | null> {
@@ -7207,13 +7160,8 @@ export class BackendQueueProcessor {
   }
 
   private async resolveCollaborationModeSettings(mode: CollaborationModeKind): Promise<ResolvedCollaborationModeSettings> {
-    let currentConfig: Record<string, unknown> | null = null
-    try {
-      const configPayload = asRecord(await this.appServer.rpc('config/read', {}))
-      currentConfig = asRecord(configPayload?.config)
-    } catch {
-      currentConfig = null
-    }
+    const configPayload = asRecord(await this.appServer.rpc('config/read', {}))
+    const currentConfig = asRecord(configPayload?.config)
 
     const configuredModel = readNonEmptyString(currentConfig?.model)
     if (configuredModel) {
@@ -7223,21 +7171,17 @@ export class BackendQueueProcessor {
       }
     }
 
-    try {
-      const modelsPayload = asRecord(await this.appServer.rpc('model/list', {}))
-      const models = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
-      for (const row of models) {
-        const record = asRecord(row)
-        const candidate = readNonEmptyString(record?.id) || readNonEmptyString(record?.model)
-        if (candidate) {
-          return {
-            model: candidate,
-            reasoningEffort: normalizeCollaborationModeReasoningEffort(normalizeReasoningEffort(currentConfig?.model_reasoning_effort)),
-          }
+    const modelsPayload = asRecord(await this.appServer.rpc('model/list', {}))
+    const models = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
+    for (const row of models) {
+      const record = asRecord(row)
+      const candidate = readNonEmptyString(record?.id) || readNonEmptyString(record?.model)
+      if (candidate) {
+        return {
+          model: candidate,
+          reasoningEffort: normalizeCollaborationModeReasoningEffort(normalizeReasoningEffort(currentConfig?.model_reasoning_effort)),
         }
       }
-    } catch {
-      // Fall through to no collaboration-mode payload.
     }
 
     throw new Error(`${mode === 'plan' ? 'Plan' : 'Default'} mode requires an available model.`)
@@ -7271,7 +7215,7 @@ export class BackendQueueProcessor {
       if (localImagePath) {
         input.push({ type: 'localImage', path: localImagePath })
       } else {
-        input.push({ type: 'image', url: normalizedUrl, image_url: normalizedUrl })
+        input.push({ type: 'image', url: normalizedUrl })
       }
     }
 
@@ -7283,22 +7227,14 @@ export class BackendQueueProcessor {
       threadId: turn.threadId,
       input,
     }
-    if (dedupedFileAttachments.length > 0) {
-      params.attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
-    }
-
-    try {
-      const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
-      params.collaborationMode = {
-        mode: turn.message.collaborationMode,
-        settings: {
-          model: settings.model,
-          reasoning_effort: settings.reasoningEffort,
-          developer_instructions: null,
-        },
-      }
-    } catch {
-      // Older app-server versions still accept a plain turn/start without collaborationMode.
+    const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
+    params.collaborationMode = {
+      mode: turn.message.collaborationMode,
+      settings: {
+        model: settings.model,
+        reasoning_effort: settings.reasoningEffort,
+        developer_instructions: null,
+      },
     }
 
     return params
@@ -8092,10 +8028,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const recoveredRpcResult = THREAD_METHODS_WITH_TURNS.has(body.method)
           ? await recoverEmptyThreadTurnsFromSessionResult(rpcResult)
           : rpcResult
-        const trimmedResult = trimThreadTurnsInRpcResult(body.method, recoveredRpcResult)
         const errorMergedResult = THREAD_METHODS_WITH_TURNS.has(body.method)
-          ? mergeStreamTurnErrorsIntoThreadResult(appServer, trimmedResult)
-          : trimmedResult
+          ? mergeStreamTurnErrorsIntoThreadResult(appServer, recoveredRpcResult)
+          : recoveredRpcResult
         const listMergedResult = body.method === 'thread/list'
           ? mergeImportedThreadsIntoThreadListResult(errorMergedResult)
           : errorMergedResult
@@ -8114,68 +8049,6 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         setJson(res, 200, { result })
-        return
-      }
-
-      if (req.method === 'GET' && url.pathname === '/codex-api/thread-turn-page') {
-        try {
-          const threadId = url.searchParams.get('threadId')?.trim() ?? ''
-          const beforeTurnId = url.searchParams.get('beforeTurnId')?.trim() ?? ''
-          const limitRaw = url.searchParams.get('limit')?.trim() ?? String(THREAD_RESPONSE_TURN_LIMIT)
-          const limit = Math.max(1, Math.min(50, Number.parseInt(limitRaw, 10) || THREAD_RESPONSE_TURN_LIMIT))
-          if (!threadId) {
-            setJson(res, 400, { error: 'Missing threadId' })
-            return
-          }
-
-          const threadReadResult = mergeStreamTurnErrorsIntoThreadResult(appServer, await appServer.readThreadForTurnPage(threadId))
-          const record = asRecord(threadReadResult)
-          const thread = asRecord(record?.thread)
-          if (!record || !thread) {
-            setJson(res, 502, { error: 'thread/read returned an invalid thread response' })
-            return
-          }
-
-          const turns = Array.isArray(thread.turns) ? thread.turns : []
-          const beforeIndex = beforeTurnId
-            ? turns.findIndex((turn) => asRecord(turn)?.id === beforeTurnId)
-            : turns.length
-          if (beforeTurnId && beforeIndex < 0) {
-            setJson(res, 200, {
-              result: {
-                ...record,
-                thread: {
-                  ...thread,
-                  turns: [],
-                },
-              },
-              startTurnIndex: 0,
-              hasMoreOlder: false,
-            })
-            return
-          }
-
-          const endIndex = beforeIndex
-          const startIndex = Math.max(0, endIndex - limit)
-          const pageTurns = turns.slice(startIndex, endIndex)
-          const pagedResult = {
-            ...record,
-            thread: {
-              ...thread,
-              turns: pageTurns,
-            },
-          }
-          const sanitized = await sanitizeThreadTurnsInlinePayloads('thread/read', pagedResult)
-          const result = await mergeSessionSkillInputsIntoThreadResult(sanitized)
-
-          setJson(res, 200, {
-            result,
-            startTurnIndex: startIndex,
-            hasMoreOlder: startIndex > 0,
-          })
-        } catch (error) {
-          setJson(res, 500, { error: getErrorMessage(error, 'Failed to load earlier thread messages') })
-        }
         return
       }
 

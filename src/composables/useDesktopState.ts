@@ -30,7 +30,9 @@ import {
   resumeThread,
 
   startThread,
+  steerThreadTurn,
   subscribeCodexNotifications,
+  unsubscribeThread,
   startThreadTurn,
   type RpcNotification,
   type ModelReasoningCapability,
@@ -1699,6 +1701,7 @@ export function useDesktopState() {
 
   function setSelectedThreadId(nextThreadId: string, options: { persist?: boolean } = {}): void {
     if (selectedThreadId.value === nextThreadId) return
+    const previousThreadId = selectedThreadId.value
     selectedThreadId.value = nextThreadId
     if (options.persist !== false) {
       saveSelectedThreadId(nextThreadId)
@@ -1711,6 +1714,21 @@ export function useDesktopState() {
     )
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
+    if (previousThreadId) {
+      void releaseInactiveThreadSubscription(previousThreadId)
+    }
+  }
+
+  async function releaseInactiveThreadSubscription(threadId: string): Promise<void> {
+    if (!threadId || threadId === selectedThreadId.value) return
+    if (inProgressById.value[threadId] === true) return
+    if (getThreadPendingRequests(threadId).length > 0) return
+    try {
+      await unsubscribeThread(threadId)
+      resumedThreadById.value = omitKey(resumedThreadById.value, threadId)
+    } catch {
+      // Keep the local subscription marker so the next turn does not assume an unsubscribe succeeded.
+    }
   }
 
   function setSelectedModelIdForThread(threadId: string, modelId: string): void {
@@ -2966,7 +2984,8 @@ export function useDesktopState() {
     const id = row.id
     const rawMethod = readString(row.method)
     const requestParams = row.params
-    if (typeof id !== 'number' || !Number.isInteger(id) || !rawMethod) {
+    const hasValidId = (typeof id === 'string' && id.length > 0) || (typeof id === 'number' && Number.isInteger(id))
+    if (!hasValidId || !rawMethod) {
       return null
     }
 
@@ -3145,15 +3164,23 @@ export function useDesktopState() {
     applyThreadFlags()
   }
 
-  function removePendingServerRequestById(requestId: number): void {
+  function removePendingServerRequestById(requestId: string | number, threadId = ''): void {
     const next: Record<string, UiServerRequest[]> = {}
-    for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
-      const filtered = requests.filter((request) => request.id !== requestId)
+    for (const [scope, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
+      const filtered = scope === threadId || !threadId
+        ? requests.filter((request) => request.id !== requestId)
+        : requests
       if (filtered.length > 0) {
-        next[threadId] = filtered
+        next[scope] = filtered
       }
     }
     pendingServerRequestsByThreadId.value = next
+    applyThreadFlags()
+  }
+
+  function removePendingServerRequestsForThread(threadId: string): void {
+    if (!threadId || !pendingServerRequestsByThreadId.value[threadId]) return
+    pendingServerRequestsByThreadId.value = omitKey(pendingServerRequestsByThreadId.value, threadId)
     applyThreadFlags()
   }
 
@@ -3181,11 +3208,12 @@ export function useDesktopState() {
       return true
     }
 
-    if (notification.method === 'server/request/resolved') {
+    if (notification.method === 'serverRequest/resolved') {
       const row = asRecord(notification.params)
-      const id = row?.id
-      if (typeof id === 'number' && Number.isInteger(id)) {
-        removePendingServerRequestById(id)
+      const id = row?.requestId ?? row?.id
+      const threadId = readString(row?.threadId)
+      if ((typeof id === 'string' && id.length > 0) || (typeof id === 'number' && Number.isInteger(id))) {
+        removePendingServerRequestById(id, threadId)
       }
       return true
     }
@@ -3782,6 +3810,15 @@ export function useDesktopState() {
       }
     }
 
+    if (notification.method === 'thread/status/changed') {
+      const params = asRecord(notification.params)
+      const threadId = readString(params?.threadId)
+      const statusType = readString(asRecord(params?.status)?.type)
+      if (threadId && statusType) {
+        setThreadInProgress(threadId, statusType === 'active')
+      }
+    }
+
     if (notification.method === 'account/rateLimits/updated') {
       setCodexRateLimit(pickCodexRateLimitSnapshot(notification.params))
       return
@@ -3825,6 +3862,9 @@ export function useDesktopState() {
     }
 
     const completedTurn = readTurnCompletedInfo(notification)
+    if (completedTurn) {
+      removePendingServerRequestsForThread(completedTurn.threadId)
+    }
     const turnErrorMessage = readTurnErrorMessage(notification)
     const completedThreadId = completedTurn?.threadId ?? extractThreadIdFromNotification(notification)
     const completedThreadModelId = completedThreadId ? readModelIdForThread(completedThreadId) : ''
@@ -4033,7 +4073,11 @@ export function useDesktopState() {
       method === 'turn/completed' ||
       method === 'error'
     const shouldRefreshThreads =
-      method.startsWith('thread/') ||
+      method === 'thread/started' ||
+      method === 'thread/archived' ||
+      method === 'thread/unarchived' ||
+      method === 'thread/deleted' ||
+      method === 'thread/closed' ||
       method === 'turn/completed'
 
     if (!shouldRefreshMessages && !shouldRefreshThreads) return
@@ -4926,14 +4970,23 @@ export function useDesktopState() {
 
     if (isInProgress) {
       shouldAutoScrollOnNextAgentEvent = true
-      void startTurnForThread(
+      const activeTurnId = activeTurnIdByThreadId.value[threadId]
+      if (!activeTurnId) {
+        const errorMessage = 'Wait for the active turn id before steering.'
+        setTurnErrorForThread(threadId, errorMessage)
+        error.value = errorMessage
+        return
+      }
+      void steerThreadTurn(
         threadId,
+        activeTurnId,
         nextText,
         imageUrls,
         skills,
         fileAttachments,
-        collaborationModeOverride,
-      ).catch((unknownError) => {
+      ).then(() => {
+        appendOptimisticUserMessage(threadId, nextText, imageUrls, skills, fileAttachments)
+      }).catch((unknownError) => {
         const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
         setTurnErrorForThread(threadId, errorMessage)
         error.value = errorMessage
