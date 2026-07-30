@@ -40,6 +40,7 @@ const gatewayMocks = vi.hoisted(() => ({
   startThread: vi.fn(),
   startThreadTurn: vi.fn(),
   subscribeCodexNotifications: vi.fn(),
+  unsubscribeThread: vi.fn(),
 }))
 
 gatewayMocks.getAvailableModelCatalog.mockImplementation(async (...args: Parameters<typeof gatewayMocks.getAvailableModelIds>) => ({
@@ -439,6 +440,20 @@ describe('collaboration mode selection', () => {
     state.primeSelectedThread('thread-a')
 
     expect(state.selectedCollaborationMode.value).toBe('plan')
+  })
+})
+
+describe('thread subscription lifecycle', () => {
+  it('releases the previous idle thread after selection changes', async () => {
+    installTestWindow()
+    gatewayMocks.unsubscribeThread.mockResolvedValue(undefined)
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-a')
+    state.primeSelectedThread('thread-b')
+    await Promise.resolve()
+
+    expect(gatewayMocks.unsubscribeThread).toHaveBeenCalledWith('thread-a')
   })
 })
 

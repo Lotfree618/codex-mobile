@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelCatalog, getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { getAvailableModelCatalog, getAvailableModelIds, getOlderThreadMessages, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -250,10 +250,17 @@ describe('getThreadDetail', () => {
   })
 
   it('reads modelProvider from nested thread payloads returned by thread/read', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = typeof init?.body === 'string'
         ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
         : { method: '', params: {} }
+      requests.push(body)
+      if (body.method === 'thread/turns/list') {
+        return new Response(JSON.stringify({
+          result: { data: [], nextCursor: null, backwardsCursor: null },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
       expect(body.method).toBe('thread/read')
       return new Response(JSON.stringify({
         result: {
@@ -271,6 +278,57 @@ describe('getThreadDetail', () => {
 
     await expect(getThreadDetail('legacy-thread')).resolves.toMatchObject({
       modelProvider: 'opencode_zen',
+    })
+    expect(requests.map((request) => request.method).sort()).toEqual(['thread/read', 'thread/turns/list'])
+  })
+
+  it('loads official turn pages instead of the custom full-history endpoint', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      requests.push(body)
+      if (body.method === 'thread/read') {
+        return new Response(JSON.stringify({ result: { thread: { id: 'thread-1', status: { type: 'idle' } } } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const cursor = body.params.cursor
+      const suffix = cursor ? 'older' : 'latest'
+      return new Response(JSON.stringify({
+        result: {
+          data: [{
+            id: `turn-${suffix}`,
+            itemsView: 'full',
+            status: 'completed',
+            error: null,
+            startedAt: null,
+            completedAt: null,
+            durationMs: null,
+            items: [{ type: 'agentMessage', id: `agent-${suffix}`, text: suffix, phase: null }],
+          }],
+          nextCursor: cursor ? null : 'older-cursor',
+          backwardsCursor: null,
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    const detail = await getThreadDetail('thread-1')
+    expect(detail.messages[0]).toMatchObject({ id: 'agent-latest', text: 'latest', turnIndex: -1 })
+    expect(detail.hasMoreOlder).toBe(true)
+    const older = await getOlderThreadMessages('thread-1', 'turn-latest')
+    expect(older.messages[0]).toMatchObject({ id: 'agent-older', text: 'older', turnIndex: -2 })
+    expect(requests.at(-1)).toEqual({
+      method: 'thread/turns/list',
+      params: {
+        threadId: 'thread-1',
+        cursor: 'older-cursor',
+        limit: 10,
+        sortDirection: 'desc',
+        itemsView: 'full',
+      },
     })
   })
 })
@@ -301,7 +359,14 @@ describe('resumeThread', () => {
 
     expect(results.every((result) => result.status === 'rejected')).toBe(true)
     expect(requests).toEqual([
-      { method: 'thread/resume', params: { threadId: 'missing-thread' } },
+      {
+        method: 'thread/resume',
+        params: {
+          threadId: 'missing-thread',
+          excludeTurns: true,
+          initialTurnsPage: { limit: 10, sortDirection: 'desc', itemsView: 'full' },
+        },
+      },
     ])
   })
 
@@ -325,8 +390,22 @@ describe('resumeThread', () => {
     const retried = resumeThread('stalled-thread')
     expect(retried).not.toBe(first)
     expect(requests).toEqual([
-      { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
-      { method: 'thread/resume', params: { threadId: 'stalled-thread' } },
+      {
+        method: 'thread/resume',
+        params: {
+          threadId: 'stalled-thread',
+          excludeTurns: true,
+          initialTurnsPage: { limit: 10, sortDirection: 'desc', itemsView: 'full' },
+        },
+      },
+      {
+        method: 'thread/resume',
+        params: {
+          threadId: 'stalled-thread',
+          excludeTurns: true,
+          initialTurnsPage: { limit: 10, sortDirection: 'desc', itemsView: 'full' },
+        },
+      },
     ])
   })
 })

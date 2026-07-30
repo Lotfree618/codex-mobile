@@ -3,6 +3,7 @@ export type { ThreadReadResponse } from '../../documentation/app-server-schemas/
 export type { ThreadLoadedListResponse } from '../../documentation/app-server-schemas/typescript/v2/ThreadLoadedListResponse'
 export type { ThreadStartResponse } from '../../documentation/app-server-schemas/typescript/v2/ThreadStartResponse'
 export type { ThreadResumeResponse } from '../../documentation/app-server-schemas/typescript/v2/ThreadResumeResponse'
+export type { ThreadTurnsListResponse } from '../../documentation/app-server-schemas/typescript/v2/ThreadTurnsListResponse'
 export type { ThreadForkResponse } from '../../documentation/app-server-schemas/typescript/v2/ThreadForkResponse'
 export type { Thread } from '../../documentation/app-server-schemas/typescript/v2/Thread'
 export type { ThreadItem } from '../../documentation/app-server-schemas/typescript/v2/ThreadItem'

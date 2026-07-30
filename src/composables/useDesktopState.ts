@@ -31,6 +31,7 @@ import {
 
   startThread,
   subscribeCodexNotifications,
+  unsubscribeThread,
   startThreadTurn,
   type RpcNotification,
   type ModelReasoningCapability,
@@ -1699,6 +1700,7 @@ export function useDesktopState() {
 
   function setSelectedThreadId(nextThreadId: string, options: { persist?: boolean } = {}): void {
     if (selectedThreadId.value === nextThreadId) return
+    const previousThreadId = selectedThreadId.value
     selectedThreadId.value = nextThreadId
     if (options.persist !== false) {
       saveSelectedThreadId(nextThreadId)
@@ -1711,6 +1713,21 @@ export function useDesktopState() {
     )
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
+    if (previousThreadId) {
+      void releaseInactiveThreadSubscription(previousThreadId)
+    }
+  }
+
+  async function releaseInactiveThreadSubscription(threadId: string): Promise<void> {
+    if (!threadId || threadId === selectedThreadId.value) return
+    if (inProgressById.value[threadId] === true) return
+    if (getThreadPendingRequests(threadId).length > 0) return
+    try {
+      await unsubscribeThread(threadId)
+      resumedThreadById.value = omitKey(resumedThreadById.value, threadId)
+    } catch {
+      // Keep the local subscription marker so the next turn does not assume an unsubscribe succeeded.
+    }
   }
 
   function setSelectedModelIdForThread(threadId: string, modelId: string): void {
